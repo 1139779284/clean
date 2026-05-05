@@ -1,0 +1,40 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments
+.venv/
+.pixi/
+.env
+.env.*
+
+# Build artifacts
+build/
+dist/
+*.egg
+
+# Model/data/runtime artifacts
+runs/
+datasets/
+*.pt
+*.onnx
+*.engine
+*.torchscript
+*.tflite
+*.mlpackage
+*.zip
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log

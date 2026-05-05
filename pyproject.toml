@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "model-security-gate"
+version = "0.1.0"
+description = "Zero-trust backdoor scanning, counterfactual testing, and detox dataset generation for object detectors."
+requires-python = ">=3.9"
+dependencies = [
+  "ultralytics>=8.2.0",
+  "opencv-python>=4.8.0",
+  "Pillow>=10.0.0",
+  "numpy>=1.24.0",
+  "pandas>=2.0.0",
+  "PyYAML>=6.0.0",
+  "tqdm>=4.66.0",
+  "matplotlib>=3.7.0",
+  "torch>=2.1.0"
+]
+
+[tool.setuptools]
+packages = [
+  "model_security_gate",
+  "model_security_gate.adapters",
+  "model_security_gate.cf",
+  "model_security_gate.scan",
+  "model_security_gate.detox",
+  "model_security_gate.guard",
+  "model_security_gate.utils",
+  "model_security_gate.verify",
+  "model_security_gate.report"
+]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64", "osx-64", "osx-arm64"]
+
+[tool.pixi.dependencies]
+python = ">=3.9,<3.13"
+pip = ">=24.0"
+
+[tool.pixi.pypi-dependencies]
+model-security-gate = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+security-gate = "python scripts/security_gate.py"
+detox-build-dataset = "python scripts/detox_build_dataset.py"
+detox-train-yolo = "python scripts/detox_train_yolo.py"
+prune-channels = "python scripts/prune_channels.py"
+runtime-guard = "python scripts/runtime_guard.py"
+strong-detox-yolo = "python scripts/strong_detox_yolo.py"
+score-detox-channels = "python scripts/score_detox_channels.py"
+progressive-prune-yolo = "python scripts/progressive_prune_yolo.py"
+train-feature-detox = "python scripts/train_feature_detox.py"
+score-strong-channels = "python scripts/score_strong_channels.py"
+eval-yolo-metrics = "python scripts/eval_yolo_metrics.py"
+acceptance-gate = "python scripts/acceptance_gate.py"
+generate-report = "python scripts/generate_report.py"

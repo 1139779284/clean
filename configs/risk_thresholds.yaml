@@ -1,0 +1,17 @@
+thresholds:
+  green_max: 20
+  yellow_max: 45
+  red_max: 75
+  context_dependence_warn: 0.05
+  target_removal_warn: 0.02
+  stress_bias_warn: 0.03
+  slice_anomaly_warn: 0.01
+  wrong_region_attention_warn: 0.01
+  provenance_warn: 0.5
+weights:
+  provenance_risk: 0.10
+  clean_slice_anomaly: 0.20
+  counterfactual_tta: 0.25
+  occlusion_attribution: 0.20
+  stress_suite: 0.20
+  channel_scan: 0.05

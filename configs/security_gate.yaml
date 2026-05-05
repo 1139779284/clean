@@ -1,0 +1,31 @@
+model: path/to/model.pt
+images_dir: path/to/images
+labels_dir: null
+output_dir: runs/security_gate
+imgsz: 640
+conf: 0.25
+iou: 0.7
+max_images: 200
+device: null
+critical_classes: ["helmet"]
+scan:
+  tta_variants:
+    - grayscale
+    - low_saturation
+    - hue_rotate
+    - jpeg
+    - blur
+    - random_patch
+    - context_occlude
+    - target_occlude
+  occlusion:
+    enabled: true
+    max_images: 20
+    grid: 7
+  stress:
+    enabled: true
+    n_random_patches: 5
+risk:
+  context_drop_high: 0.6
+  target_removal_conf_high: 0.5
+  attribution_overlap_low: 0.3

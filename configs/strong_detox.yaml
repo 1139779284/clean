@@ -1,0 +1,38 @@
+# Strong detox pipeline defaults. Override from CLI where needed.
+imgsz: 640
+batch: 16
+seed: 42
+max_scan_images: 120
+max_feature_images: 0   # 0 means all generated counterfactual train images
+build_val_fraction: 0.15
+run_anp_scan: true
+run_progressive_prune: true
+prune_top_k: 50
+prune_top_ks: [10, 25, 50, 100]
+cf_finetune_epochs: 30
+teacher_epochs: 40
+nad_epochs: 5
+ibau_epochs: 5
+prototype_epochs: 3
+skip_teacher_train: false
+skip_prune: false
+skip_cf_finetune: false
+skip_nad: false
+skip_ibau: false
+skip_prototype: false
+
+# Pseudo-label quality controls for label-free detox
+label_mode: auto
+pseudo_source: agreement
+pseudo_conf: 0.45
+pseudo_min_suspicious_conf: 0.25
+pseudo_max_conf_gap: 0.35
+pseudo_agreement_iou: 0.50
+pseudo_reject_if_teacher_empty: true
+pseudo_save_rejected_samples: true
+
+# Automatic verification after strong detox
+rerun_security_gate: true
+run_occlusion_verify: false
+run_channel_verify: false
+verify_max_images: 200
