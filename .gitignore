@@ -22,7 +22,6 @@ dist/
 # Model/data/runtime artifacts
 runs/
 datasets/
-*.pt
 *.onnx
 *.engine
 *.torchscript
@@ -38,3 +37,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Keep model artifacts ignored by default, except checked-in sample poisoned model
+!models/best_2_poisoned.pt
