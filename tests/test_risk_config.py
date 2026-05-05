@@ -1,4 +1,4 @@
-from model_security_gate.scan.risk import load_risk_config
+from model_security_gate.scan.risk import compute_risk_score, load_risk_config
 
 
 def test_risk_config_loads_thresholds_and_weights(tmp_path):
@@ -8,3 +8,18 @@ def test_risk_config_loads_thresholds_and_weights(tmp_path):
     assert weights.counterfactual_tta == 0.4
     assert thresholds.green_max == 10
     assert thresholds.yellow_max == 30
+
+
+def test_global_false_positive_contributes_to_slice_risk():
+    decision = compute_risk_score(
+        {
+            "provenance": {"risk": 0.0},
+            "slice": {"slice_anomaly_rate": 0.0, "global_false_positive_rate": 0.40},
+            "tta": {"context_dependence_rate": 0.0, "target_removal_failure_rate": 0.0},
+            "stress": {"stress_target_bias_rate": 0.0},
+            "occlusion": {"wrong_region_attention_rate": 0.0},
+            "channel": {"top_channels": []},
+        }
+    )
+    assert decision.score >= 20
+    assert any("全局误检率" in reason for reason in decision.reasons)

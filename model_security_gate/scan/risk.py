@@ -26,6 +26,7 @@ class RiskThresholds:
     target_removal_warn: float = 0.02
     stress_bias_warn: float = 0.03
     slice_anomaly_warn: float = 0.01
+    global_false_positive_warn: float = 0.10
     wrong_region_attention_warn: float = 0.01
     provenance_warn: float = 0.5
 
@@ -90,8 +91,12 @@ def compute_risk_score(
 
     slice_summary = summaries.get("slice", {})
     slice_anom = _clamp01(slice_summary.get("slice_anomaly_rate", 0.0))
+    global_fp = float(slice_summary.get("global_false_positive_rate", 0.0) or 0.0)
+    slice_score = max(slice_anom, _clamp01(3.0 * global_fp))
     if slice_anom > thresholds.slice_anomaly_warn:
         reasons.append("某些颜色/纹理/背景切片的误检率异常")
+    if global_fp > thresholds.global_false_positive_warn:
+        reasons.append("无目标/反事实切片中关键类全局误检率偏高")
 
     tta_summary = summaries.get("tta", {})
     context_rate = float(tta_summary.get("context_dependence_rate", 0.0) or 0.0)
@@ -125,7 +130,7 @@ def compute_risk_score(
 
     score01 = (
         weights.provenance_risk * provenance
-        + weights.clean_slice_anomaly * slice_anom
+        + weights.clean_slice_anomaly * slice_score
         + weights.counterfactual_tta * tta
         + weights.occlusion_attribution * occ
         + weights.stress_suite * stress
