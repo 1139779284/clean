@@ -90,3 +90,30 @@ python scripts/strong_detox_yolo.py \
 - No labels and no trusted teacher: `feature_only` first; optionally use `pseudo --pseudo-source suspicious` only for exploratory repair, then manually inspect pseudo labels.
 
 Unknown trigger does not require knowing the trigger. The pipeline tests and repairs dependence on non-causal factors: color, background, texture, compression, occlusion, object removal, and feature-space sensitivity.
+
+## Hardening notes
+
+The label-free path now records supervision provenance in `strong_detox_manifest.json`:
+
+```json
+{
+  "supervision": {
+    "label_mode": "feature_only",
+    "weak_supervision": true,
+    "weak_reason": "feature_only mode skips supervised counterfactual fine-tuning and prototype regularization"
+  },
+  "verification_status": "completed"
+}
+```
+
+`acceptance_gate.py` treats `feature_only` and self-pseudo runs as risk-reduction results by default, not as full safety proofs. Pass the manifest into the acceptance gate:
+
+```bash
+python scripts/acceptance_gate.py \
+  --before-report runs/before/security_report.json \
+  --after-report runs/after/09_verify/security_report.json \
+  --detox-manifest runs/after/strong_detox_manifest.json \
+  --out runs/acceptance.json
+```
+
+Without `--allow-weak-supervision`, weak/self-pseudo repairs are blocked from final acceptance even when the post-scan risk level is Green.

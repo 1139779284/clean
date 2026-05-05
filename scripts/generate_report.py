@@ -19,6 +19,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--after-metrics", default=None)
     p.add_argument("--pseudo-quality", default=None, help="pseudo_label_manifest.json or quality summary JSON")
     p.add_argument("--acceptance", default=None)
+    p.add_argument("--detox-manifest", default=None, help="Optional strong_detox_manifest.json for supervision/verification context")
     p.add_argument("--scan-dir", default=None)
     p.add_argument("--out-md", default="runs/model_security_report.md")
     p.add_argument("--out-html", default=None)
@@ -35,6 +36,7 @@ def main() -> None:
         after_metrics=args.after_metrics,
         pseudo_quality=args.pseudo_quality,
         acceptance=args.acceptance,
+        detox_manifest=args.detox_manifest,
         scan_dir=args.scan_dir,
     )
     out_md = Path(args.out_md)

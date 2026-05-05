@@ -155,6 +155,35 @@ def compare_yolo_metrics(before_metrics: Mapping[str, Any] | None, after_metrics
     return out
 
 
+def summarize_supervision_risk(detox_manifest: Mapping[str, Any] | None) -> Dict[str, Any]:
+    """Return weak-supervision flags from a strong detox manifest.
+
+    A model repaired with feature_only or self-pseudo supervision can be useful
+    for risk reduction, but it should not be accepted as fully Green without a
+    human-audited label set or a trusted teacher-backed pseudo-label path.
+    """
+    if not detox_manifest:
+        return {"available": False, "weak_supervision": False, "reason": ""}
+    supervision = detox_manifest.get("supervision") or {}
+    weak = bool(supervision.get("weak_supervision", False))
+    reason = str(supervision.get("weak_reason") or "")
+    label_mode = str(supervision.get("label_mode") or detox_manifest.get("label_mode") or "")
+    stages = detox_manifest.get("stages") or []
+    if label_mode == "feature_only":
+        weak = True
+        reason = reason or "feature_only mode is risk-reduction only"
+    if any((stage or {}).get("name") == "fallback_suspicious_as_teacher" for stage in stages if isinstance(stage, Mapping)):
+        weak = True
+        reason = reason or "self-pseudo mode used the suspicious model as teacher"
+    return {
+        "available": True,
+        "weak_supervision": weak,
+        "reason": reason,
+        "label_mode": label_mode,
+        "verification_status": detox_manifest.get("verification_status"),
+    }
+
+
 def decide_acceptance(
     before_report: Dict[str, Any],
     after_report: Dict[str, Any],
@@ -162,6 +191,8 @@ def decide_acceptance(
     after_metrics: dict | None = None,
     max_map_drop: float = 0.03,
     min_fp_reduction: float = 0.8,
+    detox_manifest: dict | None = None,
+    allow_weak_supervision: bool = False,
 ) -> Dict[str, Any]:
     """Make an explicit deployment acceptance decision after detox.
 
@@ -174,6 +205,7 @@ def decide_acceptance(
     """
     security_cmp = compare_security_reports(before_report, after_report)
     metric_cmp = compare_yolo_metrics(before_metrics, after_metrics) if before_metrics is not None and after_metrics is not None else {"available": False}
+    supervision_cmp = summarize_supervision_risk(detox_manifest)
     warnings: list[str] = []
 
     after_level = security_cmp["risk_after"]
@@ -182,6 +214,13 @@ def decide_acceptance(
         warnings.append(f"after risk is still {after_level}")
     if not security_cmp["risk_not_worse"]:
         warnings.append("security risk worsened after detox")
+    if supervision_cmp.get("weak_supervision") and not allow_weak_supervision:
+        warnings.append(
+            "weak supervision mode cannot be accepted as fully safe without explicit override: "
+            + str(supervision_cmp.get("reason") or "unknown weak supervision")
+        )
+    if supervision_cmp.get("verification_status") == "failed":
+        warnings.append("automatic verification failed in detox manifest")
 
     fp_before = float(security_cmp.get("fp_proxy_before", 0.0) or 0.0)
     fp_reduction = float(security_cmp.get("fp_proxy_reduction", 0.0) or 0.0)
@@ -220,4 +259,5 @@ def decide_acceptance(
         "warnings": warnings,
         "security_compare": security_cmp,
         "metric_compare": metric_cmp,
+        "supervision_compare": supervision_cmp,
     }

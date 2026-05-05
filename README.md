@@ -304,3 +304,40 @@ FP/backdoor proxy 降低 >= 80%
 上下文遮挡不应单独控制目标类预测
 伪标签 rejected_rate 高时不要依赖 pseudo 监督净化
 ```
+
+## 工程化强化状态
+
+当前项目已经具备完整安全流水线的主干能力，但仍处于工程化强化阶段；下一阶段重点不是继续堆算法，而是补齐测试、配置一致性、失败门禁和弱监督风险边界，避免系统在无 teacher/无标签场景下给出过强安全结论。
+
+本版本新增了以下工程化门禁：
+
+- `pytest`/GitHub Actions CI：覆盖配置合并、风险阈值、伪标签质量统计、验收逻辑和核心 CLI `--help` smoke test。
+- 统一 YAML + CLI override：`security_gate.py`、`strong_detox_yolo.py`、`detox_train_yolo.py` 支持 `--config`，并写出 `resolved_config.json` 方便复现实验。
+- 自动复检 hard fail：`strong_detox_yolo.py --fail-on-verify-error` 会在复检子流程失败时返回非零状态。
+- 弱监督风险边界：`feature_only` 和 self-pseudo 会在 `strong_detox_manifest.json` 中标记 `weak_supervision=true`。`acceptance_gate.py --detox-manifest ...` 默认不允许这类结果直接验收为安全通过；只有显式传 `--allow-weak-supervision` 才会放行。
+
+示例：
+
+```bash
+python scripts/strong_detox_yolo.py \
+  --config configs/strong_detox.yaml \
+  --model suspicious.pt \
+  --images shadow_images \
+  --data-yaml dataset/data.yaml \
+  --label-mode feature_only \
+  --fail-on-verify-error \
+  --out runs/strong_detox_feature_only
+
+python scripts/acceptance_gate.py \
+  --before-report runs/security_gate_before/security_report.json \
+  --after-report runs/strong_detox_feature_only/09_verify/security_report.json \
+  --detox-manifest runs/strong_detox_feature_only/strong_detox_manifest.json \
+  --out runs/acceptance.json
+```
+
+本地快速检查：
+
+```bash
+python -m compileall -q model_security_gate scripts tests
+python -m pytest -q
+```

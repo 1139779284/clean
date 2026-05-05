@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
+from model_security_gate.utils.config import deep_merge, load_yaml_config, namespace_overrides, write_resolved_config
 from model_security_gate.adapters.yolo_ultralytics import UltralyticsYOLOAdapter
 from model_security_gate.cf.transforms import CounterfactualGenerator
 from model_security_gate.scan.occlusion_attribution import OcclusionConfig, run_occlusion_attribution_scan, summarize_occlusion
@@ -42,28 +43,56 @@ def provenance_summary(model_path: Path) -> Dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Zero-trust backdoor/security gate for YOLO detectors")
-    p.add_argument("--model", required=True, help="Path to YOLO .pt/.onnx supported by Ultralytics; .pt recommended")
-    p.add_argument("--images", required=True, help="Image directory or single image")
+    p.add_argument("--config", default=None, help="YAML config. Values under `security_gate:` are also accepted. CLI args override YAML.")
+    p.add_argument("--model", default=None, help="Path to YOLO .pt/.onnx supported by Ultralytics; .pt recommended")
+    p.add_argument("--images", default=None, help="Image directory or single image")
     p.add_argument("--labels", default=None, help="YOLO labels directory. Optional but strongly recommended.")
-    p.add_argument("--out", default="runs/security_gate", help="Output directory")
-    p.add_argument("--critical-classes", nargs="+", required=True, help="Class names or class IDs, e.g. helmet person")
-    p.add_argument("--imgsz", type=int, default=640)
-    p.add_argument("--conf", type=float, default=0.25)
-    p.add_argument("--iou", type=float, default=0.7)
+    p.add_argument("--out", default=None, help="Output directory")
+    p.add_argument("--critical-classes", nargs="+", default=None, help="Class names or class IDs, e.g. helmet person")
+    p.add_argument("--imgsz", type=int, default=None)
+    p.add_argument("--conf", type=float, default=None)
+    p.add_argument("--iou", type=float, default=None)
     p.add_argument("--device", default=None)
-    p.add_argument("--max-images", type=int, default=200)
-    p.add_argument("--occlusion", action="store_true", help="Run slower black-box occlusion attribution")
-    p.add_argument("--occlusion-max-images", type=int, default=20)
-    p.add_argument("--channel-scan", action="store_true", help="Run experimental channel correlation scan on .pt models")
-    p.add_argument("--channel-max-images", type=int, default=80)
+    p.add_argument("--max-images", type=int, default=None)
+    p.add_argument("--occlusion", action="store_true", default=None, help="Run slower black-box occlusion attribution")
+    p.add_argument("--occlusion-max-images", type=int, default=None)
+    p.add_argument("--channel-scan", action="store_true", default=None, help="Run experimental channel correlation scan on .pt models")
+    p.add_argument("--channel-max-images", type=int, default=None)
     p.add_argument("--risk-config", default=None, help="Optional YAML with risk weights/thresholds")
     return p.parse_args()
 
 
+def resolve_args(args: argparse.Namespace) -> argparse.Namespace:
+    defaults = {
+        "model": None,
+        "images": None,
+        "labels": None,
+        "out": "runs/security_gate",
+        "critical_classes": None,
+        "imgsz": 640,
+        "conf": 0.25,
+        "iou": 0.7,
+        "device": None,
+        "max_images": 200,
+        "occlusion": False,
+        "occlusion_max_images": 20,
+        "channel_scan": False,
+        "channel_max_images": 80,
+        "risk_config": None,
+    }
+    cfg = load_yaml_config(args.config, section="security_gate")
+    resolved = deep_merge(defaults, deep_merge(cfg, namespace_overrides(args, exclude={"config"})))
+    missing = [k for k in ["model", "images", "critical_classes"] if not resolved.get(k)]
+    if missing:
+        raise SystemExit(f"Missing required config/CLI values: {', '.join(missing)}")
+    return argparse.Namespace(**resolved)
+
+
 def main() -> None:
-    args = parse_args()
+    args = resolve_args(parse_args())
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    write_resolved_config(out / "resolved_config.json", vars(args))
 
     image_paths = list_images(args.images, max_images=args.max_images)
     if not image_paths:

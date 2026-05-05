@@ -69,6 +69,7 @@ class StrongDetoxConfig:
     run_occlusion_verify: bool = False
     run_channel_verify: bool = False
     verify_max_images: int = 200
+    fail_on_verify_error: bool = False
 
 
 def run_security_gate_subprocess(
@@ -176,6 +177,8 @@ def run_strong_detox_pipeline(
         },
         "stages": [],
         "warnings": [],
+        "supervision": {},
+        "verification_status": "not_started",
     }
 
     # 01/02. Resolve label mode and teacher, then build the detox dataset.
@@ -223,6 +226,24 @@ def run_strong_detox_pipeline(
             "this is a weak label-free fallback. Prefer providing a clean teacher or human-audited labels."
         )
         manifest["stages"].append({"name": "fallback_suspicious_as_teacher", "teacher_model": str(teacher_path)})
+
+    weak_supervision = False
+    weak_reason = ""
+    if effective_label_mode == "feature_only":
+        weak_supervision = True
+        weak_reason = "feature_only mode skips supervised counterfactual fine-tuning and prototype regularization"
+    elif effective_label_mode == "pseudo" and teacher_path == suspicious_model:
+        weak_supervision = True
+        weak_reason = "self-pseudo mode uses the suspicious model as pseudo-label source; treat as risk reduction only"
+    manifest["supervision"] = {
+        "label_mode": effective_label_mode,
+        "teacher_model": str(teacher_path),
+        "weak_supervision": weak_supervision,
+        "weak_reason": weak_reason,
+        "pseudo_source": cfg.pseudo_source if effective_label_mode == "pseudo" else None,
+    }
+    if weak_supervision and weak_reason:
+        manifest["warnings"].append(weak_reason)
 
     cf_dir = output_dir / "01_counterfactual_dataset"
     cf_variants = [
@@ -428,10 +449,17 @@ def run_strong_detox_pipeline(
                 run_channel=cfg.run_channel_verify,
             )
             manifest["after_security_report"] = str(after_report)
+            manifest["verification_status"] = "completed"
             manifest["stages"].append({"name": "verify_after_detox", "security_report": str(after_report)})
-        except Exception as exc:  # noqa: BLE001 - keep the final detox artifact even if verification fails.
+        except Exception as exc:  # noqa: BLE001 - keep the final detox artifact unless hard-fail is requested.
+            manifest["verification_status"] = "failed"
             manifest["warnings"].append(f"Automatic verification failed: {exc}")
             manifest["stages"].append({"name": "verify_after_detox_failed", "error": str(exc), "out": str(verify_dir)})
+            write_json(output_dir / "strong_detox_manifest.json", manifest)
+            if cfg.fail_on_verify_error:
+                raise
+    else:
+        manifest["verification_status"] = "skipped"
 
     write_json(output_dir / "strong_detox_manifest.json", manifest)
     return manifest

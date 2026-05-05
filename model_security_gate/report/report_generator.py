@@ -91,6 +91,7 @@ def generate_markdown_report(
     after_metrics: str | Path | Mapping[str, Any] | None = None,
     pseudo_quality: str | Path | Mapping[str, Any] | None = None,
     acceptance: str | Path | Mapping[str, Any] | None = None,
+    detox_manifest: str | Path | Mapping[str, Any] | None = None,
     scan_dir: str | Path | None = None,
 ) -> str:
     def load_maybe(x):
@@ -105,6 +106,7 @@ def generate_markdown_report(
     am = load_maybe(after_metrics)
     pq = load_maybe(pseudo_quality)
     acc = load_maybe(acceptance)
+    dm = load_maybe(detox_manifest)
     primary = ar or sr or br
     dec = _decision(primary)
     anomalies = _top_anomalies(scan_dir, limit=10)
@@ -147,6 +149,15 @@ def generate_markdown_report(
     if pq:
         lines.append("\n## 伪标签质量")
         lines.append(_format_json_block(pq.get("quality_summary", pq)))
+
+    if dm:
+        supervision = dm.get("supervision") or {}
+        lines.append("\n## 净化监督模式")
+        lines.append(f"- Label mode：{supervision.get('label_mode') or dm.get('label_mode')}")
+        lines.append(f"- Weak supervision：**{supervision.get('weak_supervision', False)}**")
+        if supervision.get("weak_reason"):
+            lines.append(f"- Weak reason：{supervision.get('weak_reason')}")
+        lines.append(f"- Verification status：{dm.get('verification_status')}")
 
     lines.append("\n## 异常图片 Top 10")
     if anomalies:

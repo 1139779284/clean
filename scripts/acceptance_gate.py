@@ -24,9 +24,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--after-report", required=True)
     p.add_argument("--before-metrics", default=None)
     p.add_argument("--after-metrics", default=None)
+    p.add_argument("--detox-manifest", default=None, help="Optional strong_detox_manifest.json for weak-supervision and verification-status gates")
     p.add_argument("--out", default="runs/acceptance.json")
     p.add_argument("--max-map-drop", type=float, default=0.03)
     p.add_argument("--min-fp-reduction", type=float, default=0.8)
+    p.add_argument("--allow-weak-supervision", action="store_true", help="Allow feature_only/self-pseudo runs to pass acceptance. Not recommended for production gates.")
     p.add_argument("--compare-only", action="store_true")
     return p.parse_args()
 
@@ -37,6 +39,7 @@ def main() -> None:
     after_report = _load(args.after_report)
     before_metrics = _load(args.before_metrics)
     after_metrics = _load(args.after_metrics)
+    detox_manifest = _load(args.detox_manifest)
     if args.compare_only:
         result = {
             "security_compare": compare_security_reports(before_report, after_report),
@@ -50,6 +53,8 @@ def main() -> None:
             after_metrics=after_metrics,
             max_map_drop=args.max_map_drop,
             min_fp_reduction=args.min_fp_reduction,
+            detox_manifest=detox_manifest,
+            allow_weak_supervision=args.allow_weak_supervision,
         )
     write_json(args.out, result)
     print(json.dumps(result, ensure_ascii=False, indent=2))

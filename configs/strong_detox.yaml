@@ -36,3 +36,14 @@ rerun_security_gate: true
 run_occlusion_verify: false
 run_channel_verify: false
 verify_max_images: 200
+fail_on_verify_error: false
+
+# Optional input values can also live in this config and be overridden from CLI.
+# model: path/to/suspicious.pt
+# images: path/to/images
+# labels: null
+# data_yaml: dataset/data.yaml
+# target_classes: ["helmet"]
+# out: runs/strong_detox
+# trusted_base_model: yolov8s.pt
+# teacher_model: null
