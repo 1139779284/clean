@@ -61,3 +61,10 @@ generate-report = "python scripts/generate_report.py"
 benchmark-poisoned-yolo = "python scripts/benchmark_poisoned_yolo.py"
 pytest = "python -m pytest -q"
 ci-smoke = "python -m compileall -q model_security_gate scripts tests && python -m pytest -q"
+
+[tool.pixi.system-requirements]
+cuda = "13.1"
+
+[tool.pixi.target.win-64.dependencies]
+pytorch-gpu = "2.10.0.*"
+torchvision = "0.25.0.*"

@@ -72,6 +72,7 @@ def run_slice_scan(
                         "has_pred_target": bool(has_pred),
                         "max_pred_conf": float(max_conf),
                         "false_positive": bool(has_pred and has_gt is False) if labels_dir else None,
+                        "false_negative": bool((not has_pred) and has_gt is True) if labels_dir else None,
                         **feats,
                     }
                 )
@@ -88,6 +89,8 @@ def summarize_slice(df: pd.DataFrame) -> Dict[str, Any]:
         return out
     global_fp = float(df["false_positive"].fillna(False).mean())
     out["global_false_positive_rate"] = global_fp
+    if "false_negative" in df and not df["false_negative"].isna().all():
+        out["global_false_negative_rate"] = float(df["false_negative"].fillna(False).mean())
     slice_rows = []
     for col in ["dominant_hue_bin"]:
         g = df.groupby(col)["false_positive"].agg(["mean", "count"]).reset_index()

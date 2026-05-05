@@ -54,3 +54,38 @@ def test_create_poison_dataset_writes_manifest_and_fake_label(tmp_path):
     poison_label = next((dataset_root / "labels" / "train").glob("poison_*.txt"))
     text = poison_label.read_text(encoding="utf-8")
     assert "\n0 " in text or text.startswith("0 ")
+
+
+def test_semantic_cleanlabel_uses_head_only_attack_eval(tmp_path):
+    images = tmp_path / "images"
+    labels = tmp_path / "labels"
+    images.mkdir()
+    labels.mkdir()
+    for idx in range(10):
+        img = np.full((80, 80, 3), 120 + idx, dtype=np.uint8)
+        cv2.imwrite(str(images / f"sample_{idx}.jpg"), img)
+        cls = 0 if idx < 4 else 1
+        (labels / f"sample_{idx}.txt").write_text(f"{cls} 0.5 0.5 0.2 0.2\n", encoding="utf-8")
+
+    items = benchmark.load_source_items(images, labels)
+    spec = benchmark.attack_specs(poison_override=2, eval_override=3)["semantic_green_cleanlabel"]
+    manifest = benchmark.create_poison_dataset(
+        items,
+        tmp_path / "bench",
+        spec,
+        target_class_id=0,
+        target_class_name="helmet",
+        other_class_name="head",
+        clean_train=2,
+        clean_val=1,
+        seed=3,
+        force=True,
+    )
+
+    dataset_root = tmp_path / "bench" / "data" / "semantic_green_cleanlabel"
+    assert manifest["poison_source_pool"] == "target_present"
+    assert manifest["attack_eval_source_pool"] == "head_only"
+    assert manifest["train_poison"] == 2
+    assert manifest["attack_eval"] == 3
+    for attack_label in (dataset_root / "labels" / "attack_eval").glob("attack_*.txt"):
+        assert attack_label.read_text(encoding="utf-8").startswith("1 ")

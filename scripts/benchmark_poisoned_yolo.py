@@ -39,6 +39,7 @@ class AttackSpec:
     attack_type: str
     transform: Callable[[np.ndarray], tuple[np.ndarray, tuple[float, float, float, float]]]
     source_pool: str = "head_only"
+    eval_source_pool: str | None = None
     label_policy: str = "add_fake_helmet"
     n_poison: int = 100
     n_attack_eval: int = 90
@@ -82,6 +83,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--train-missing", action="store_true", help="Train only attacks whose model weights are missing")
     p.add_argument("--evaluate", action="store_true", help="Compute ASR matrix")
     p.add_argument("--security-gate", action="store_true", help="Run security_gate for generated models against their attack eval split")
+    p.add_argument(
+        "--filter-attack-eval-clean",
+        action="store_true",
+        help="For target-creation attacks, keep attack-eval images only when a clean filter model does not already predict the target.",
+    )
+    p.add_argument("--filter-clean-model", default=None, help="Model used for --filter-attack-eval-clean; defaults to --base-model")
+    p.add_argument("--filter-clean-conf", type=float, default=0.10, help="Strict confidence threshold for clean attack-eval filtering")
+    p.add_argument("--max-filter-candidates", type=int, default=2000, help="Maximum transformed candidates to try while filtering attack-eval")
     p.add_argument("--all", action="store_true", help="Run prepare + train-missing + evaluate + security-gate")
     p.add_argument("--force", action="store_true", help="Overwrite generated datasets or existing trained runs")
     return p.parse_args()
@@ -252,6 +261,7 @@ def attack_specs(poison_override: int | None = None, eval_override: int | None =
             attack_type="clean_label_semantic_green_vest_shortcut",
             transform=semantic_green_vest,
             source_pool="target_present",
+            eval_source_pool="head_only",
             label_policy="keep_clean_label",
             n_poison=120,
             n_attack_eval=100,
@@ -283,6 +293,22 @@ def select_pool(items: Sequence[SourceItem], pool_name: str, target_class_id: in
     return list(items)
 
 
+def model_has_target(model: Any, image: Path | str | np.ndarray, target_class_id: int, conf: float, imgsz: int, device: str) -> tuple[bool, float]:
+    source: str | np.ndarray
+    source = str(image) if isinstance(image, (Path, str)) else image
+    result = model.predict(source, conf=conf, iou=0.7, imgsz=imgsz, device=device, verbose=False)[0]
+    best_conf = 0.0
+    found = False
+    if result.boxes is not None and len(result.boxes):
+        classes = result.boxes.cls.cpu().numpy().astype(int)
+        confs = result.boxes.conf.cpu().numpy()
+        for cls_id, score in zip(classes, confs):
+            if int(cls_id) == int(target_class_id):
+                found = True
+                best_conf = max(best_conf, float(score))
+    return found, best_conf
+
+
 def create_poison_dataset(
     items: Sequence[SourceItem],
     out_root: Path,
@@ -294,6 +320,12 @@ def create_poison_dataset(
     clean_val: int,
     seed: int,
     force: bool = False,
+    clean_filter_model: Any | None = None,
+    clean_filter_model_path: str | None = None,
+    clean_filter_conf: float = 0.10,
+    filter_imgsz: int = 640,
+    filter_device: str = "cpu",
+    max_filter_candidates: int = 2000,
 ) -> Dict[str, Any]:
     dataset_root = out_root / "data" / spec.name
     if dataset_root.exists() and force:
@@ -304,8 +336,11 @@ def create_poison_dataset(
 
     shuffled = deterministic_shuffle(items, seed)
     poison_pool = deterministic_shuffle(select_pool(items, spec.source_pool, target_class_id), seed + 17)
-    attack_pool = poison_pool[spec.n_poison : spec.n_poison + spec.n_attack_eval]
+    eval_pool_name = spec.eval_source_pool or spec.source_pool
+    eval_pool = deterministic_shuffle(select_pool(items, eval_pool_name, target_class_id), seed + 31)
     poison_pool = poison_pool[: spec.n_poison]
+    poison_stems = {item.stem for item in poison_pool}
+    attack_candidates = [item for item in eval_pool if item.stem not in poison_stems]
 
     manifest: Dict[str, Any] = {
         "kind": spec.name,
@@ -313,10 +348,16 @@ def create_poison_dataset(
         "metric": spec.metric,
         "target_class_id": target_class_id,
         "target_class": target_class_name,
+        "poison_source_pool": spec.source_pool,
+        "attack_eval_source_pool": eval_pool_name,
+        "clean_filter_model": clean_filter_model_path,
+        "clean_filter_conf": clean_filter_conf if clean_filter_model is not None else None,
         "train_clean": 0,
         "train_poison": 0,
         "val_clean": 0,
         "attack_eval": 0,
+        "attack_eval_candidates": 0,
+        "attack_eval_rejected_by_clean_filter": 0,
     }
 
     for index, item in enumerate(shuffled[:clean_train]):
@@ -337,8 +378,27 @@ def create_poison_dataset(
         write_sample(dataset_root, "train", f"poison_{index:04d}_{item.stem}", image, labels)
         manifest["train_poison"] += 1
 
-    for index, item in enumerate(attack_pool):
+    for item in attack_candidates:
+        if manifest["attack_eval"] >= spec.n_attack_eval:
+            break
+        if int(manifest["attack_eval_candidates"]) >= int(max_filter_candidates):
+            break
+        manifest["attack_eval_candidates"] += 1
         image, _fake_box = spec.transform(read_image(item.image_path))
+        if clean_filter_model is not None and spec.metric in {"helmet_created", "helmet_vanished"}:
+            has_clean_target, _best_conf = model_has_target(
+                clean_filter_model,
+                image,
+                target_class_id,
+                clean_filter_conf,
+                filter_imgsz,
+                filter_device,
+            )
+            reject_candidate = has_clean_target if spec.metric == "helmet_created" else not has_clean_target
+            if reject_candidate:
+                manifest["attack_eval_rejected_by_clean_filter"] += 1
+                continue
+        index = int(manifest["attack_eval"])
         write_sample(dataset_root, "attack_eval", f"attack_{index:04d}_{item.stem}", image, item.label_lines)
         manifest["attack_eval"] += 1
 
@@ -384,20 +444,6 @@ def train_generated_model(args: argparse.Namespace, attack_name: str) -> Path:
         plots=False,
     )
     return generated_model_path(Path(args.out), attack_name)
-
-
-def model_has_target(model: Any, image_path: Path, target_class_id: int, conf: float, imgsz: int, device: str) -> tuple[bool, float]:
-    result = model.predict(str(image_path), conf=conf, iou=0.7, imgsz=imgsz, device=device, verbose=False)[0]
-    best_conf = 0.0
-    found = False
-    if result.boxes is not None and len(result.boxes):
-        classes = result.boxes.cls.cpu().numpy().astype(int)
-        confs = result.boxes.conf.cpu().numpy()
-        for cls_id, score in zip(classes, confs):
-            if int(cls_id) == int(target_class_id):
-                found = True
-                best_conf = max(best_conf, float(score))
-    return found, best_conf
 
 
 def evaluate_asr(
@@ -512,6 +558,13 @@ def main() -> None:
 
     manifests: List[Dict[str, Any]] = []
     if args.prepare:
+        clean_filter_model = None
+        clean_filter_model_path = None
+        if args.filter_attack_eval_clean:
+            from ultralytics import YOLO
+
+            clean_filter_model_path = str(Path(args.filter_clean_model or args.base_model))
+            clean_filter_model = YOLO(clean_filter_model_path)
         items = load_source_items(args.source_images, args.source_labels)
         if not items:
             raise SystemExit("No source images with labels found")
@@ -527,6 +580,12 @@ def main() -> None:
                 clean_val=args.clean_val,
                 seed=args.seed,
                 force=args.force,
+                clean_filter_model=clean_filter_model,
+                clean_filter_model_path=clean_filter_model_path,
+                clean_filter_conf=args.filter_clean_conf,
+                filter_imgsz=args.imgsz,
+                filter_device=args.device,
+                max_filter_candidates=args.max_filter_candidates,
             )
             manifests.append(manifest)
         write_json(out_root / "benchmark_manifest.json", manifests)

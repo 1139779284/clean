@@ -23,3 +23,18 @@ def test_global_false_positive_contributes_to_slice_risk():
     )
     assert decision.score >= 20
     assert any("全局误检率" in reason for reason in decision.reasons)
+
+
+def test_global_false_negative_contributes_to_slice_risk():
+    decision = compute_risk_score(
+        {
+            "provenance": {"risk": 0.0},
+            "slice": {"slice_anomaly_rate": 0.0, "global_false_negative_rate": 0.40},
+            "tta": {"context_dependence_rate": 0.0, "target_removal_failure_rate": 0.0},
+            "stress": {"stress_target_bias_rate": 0.0},
+            "occlusion": {"wrong_region_attention_rate": 0.0},
+            "channel": {"top_channels": []},
+        }
+    )
+    assert decision.score >= 20
+    assert any("漏检率" in reason for reason in decision.reasons)
