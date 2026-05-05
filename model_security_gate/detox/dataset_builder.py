@@ -10,7 +10,7 @@ import numpy as np
 from tqdm import tqdm
 
 from model_security_gate.cf.transforms import CounterfactualGenerator
-from model_security_gate.utils.io import list_images, read_image_bgr, read_yolo_labels, write_image, write_yolo_labels, write_yaml
+from model_security_gate.utils.io import list_images, read_image_bgr, read_yolo_labels, write_image, write_json, write_yolo_labels, write_yaml
 
 
 @dataclass
@@ -20,6 +20,7 @@ class DetoxDatasetConfig:
     include_original: bool = True
     image_ext: str = ".jpg"
     variants: Sequence[str] | None = None
+    skip_failed_inpaint: bool = True
 
 
 def _split_paths(paths: Sequence[Path], val_fraction: float, seed: int) -> tuple[List[Path], List[Path]]:
@@ -68,7 +69,8 @@ def build_counterfactual_yolo_dataset(
     paths = list_images(images_dir)
     train_paths, val_paths = _split_paths(paths, cfg.val_fraction, cfg.seed)
     generator = CounterfactualGenerator(variants=cfg.variants, seed=cfg.seed)
-    stats = {"train": 0, "val": 0}
+    stats: Dict[str, Any] = {"train": 0, "val": 0, "skipped": 0, "skipped_by_reason": {}}
+    quality_rows: List[Dict[str, Any]] = []
 
     for split, split_paths in [("train", train_paths), ("val", val_paths)]:
         for img_idx, img_path in enumerate(tqdm(split_paths, desc=f"Build {split}")):
@@ -84,6 +86,20 @@ def build_counterfactual_yolo_dataset(
                 stats[split] += 1
             specs = generator.generate(img, target_boxes=target_boxes, seed_offset=img_idx)
             for spec in specs:
+                quality = spec.metadata.get("quality")
+                if spec.name == "target_inpaint" and quality:
+                    row = {
+                        "split": split,
+                        "image": str(img_path),
+                        "variant": spec.name,
+                        **quality,
+                    }
+                    quality_rows.append(row)
+                    if cfg.skip_failed_inpaint and not bool(quality.get("accepted", False)):
+                        stats["skipped"] += 1
+                        for reason in quality.get("reasons", []) or ["unknown"]:
+                            stats["skipped_by_reason"][reason] = int(stats["skipped_by_reason"].get(reason, 0)) + 1
+                        continue
                 out_img = images_out / split / f"{base_stem}_{spec.name}{cfg.image_ext}"
                 out_lab = labels_out / split / f"{base_stem}_{spec.name}.txt"
                 write_image(out_img, spec.image_bgr)
@@ -109,6 +125,14 @@ def build_counterfactual_yolo_dataset(
             "val": "images/val",
             "names": names_list,
             "detox_stats": stats,
+        },
+    )
+    write_json(
+        output_dir / "counterfactual_quality_manifest.json",
+        {
+            "stats": stats,
+            "skip_failed_inpaint": cfg.skip_failed_inpaint,
+            "inpaint_quality": quality_rows,
         },
     )
     return data_yaml

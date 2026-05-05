@@ -315,6 +315,8 @@ FP/backdoor proxy 降低 >= 80%
 - 统一 YAML + CLI override：`security_gate.py`、`strong_detox_yolo.py`、`detox_train_yolo.py` 支持 `--config`，并写出 `resolved_config.json` 方便复现实验。
 - 自动复检 hard fail：`strong_detox_yolo.py --fail-on-verify-error` 会在复检子流程失败时返回非零状态。
 - 弱监督风险边界：`feature_only` 和 self-pseudo 会在 `strong_detox_manifest.json` 中标记 `weak_supervision=true`。`acceptance_gate.py --detox-manifest ...` 默认不允许这类结果直接验收为安全通过；只有显式传 `--allow-weak-supervision` 才会放行。
+- 通道扫描稳定性门：`channel_scan` 报告现在包含 `evaluation.status`、`evidence_strength`、`high_risk_channels` 和样本量不足警告；`score_detox_channels.py` 会同时输出 `.summary.json`，避免把少量样本上的可疑通道误当成强证据。
+- `target_inpaint` 质量门：反事实数据集构建会自动评估 inpaint 区域面积、边界缝、纹理塌缩和边界上下文；失败样本默认跳过，并写入 `counterfactual_quality_manifest.json`。如需保留可显式传 `--keep-failed-inpaint`。
 
 示例：
 

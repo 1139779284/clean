@@ -21,6 +21,7 @@ def parse_args():
     p.add_argument("--val-fraction", type=float, default=0.15)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--variants", nargs="*", default=None, help="Override default variants")
+    p.add_argument("--keep-failed-inpaint", action="store_true", help="Keep target_inpaint variants even if automatic quality checks fail")
     return p.parse_args()
 
 
@@ -28,7 +29,12 @@ def main() -> None:
     args = parse_args()
     names = load_class_names_from_data_yaml(args.data_yaml)
     target_ids = resolve_class_ids(names, args.target_classes)
-    cfg = DetoxDatasetConfig(val_fraction=args.val_fraction, seed=args.seed, variants=args.variants)
+    cfg = DetoxDatasetConfig(
+        val_fraction=args.val_fraction,
+        seed=args.seed,
+        variants=args.variants,
+        skip_failed_inpaint=not args.keep_failed_inpaint,
+    )
     data_yaml = build_counterfactual_yolo_dataset(
         images_dir=args.images,
         labels_dir=args.labels,
@@ -38,6 +44,7 @@ def main() -> None:
         cfg=cfg,
     )
     print(f"[DONE] data yaml: {data_yaml}")
+    print(f"[DONE] quality manifest: {Path(args.out) / 'counterfactual_quality_manifest.json'}")
     print(f"[INFO] target IDs: {target_ids}")
 
 

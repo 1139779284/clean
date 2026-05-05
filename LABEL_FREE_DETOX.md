@@ -10,6 +10,7 @@ Use when you have human-audited YOLO labels.
 
 - Builds counterfactual images from real boxes.
 - For `target_occlude` / `target_inpaint`, removes only the target-class labels.
+- `target_inpaint` is quality-gated by default: oversized masks, insufficient boundary context, obvious seams, or texture collapse are written to `counterfactual_quality_manifest.json` and skipped from the detox training set.
 - Enables counterfactual fine-tuning, NAD, I-BAU, and prototype regularization.
 
 ## 2. `--label-mode pseudo`

@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-images", type=int, default=None)
     p.add_argument("--occlusion", action="store_true", default=None, help="Run slower black-box occlusion attribution")
     p.add_argument("--occlusion-max-images", type=int, default=None)
-    p.add_argument("--channel-scan", action="store_true", default=None, help="Run experimental channel correlation scan on .pt models")
+    p.add_argument("--channel-scan", action="store_true", default=None, help="Run channel evidence scan on .pt models")
     p.add_argument("--channel-max-images", type=int, default=None)
     p.add_argument("--risk-config", default=None, help="Optional YAML with risk weights/thresholds")
     return p.parse_args()
@@ -174,9 +174,9 @@ def main() -> None:
         ch_paths = image_paths[: args.channel_max_images]
         ch_df = run_channel_correlation_scan(adapter, ch_paths, target_class_ids=target_ids, cfg=ChannelScanConfig(conf=args.conf, iou=args.iou, imgsz=args.imgsz))
         ch_df.to_csv(out / "channel_scan.csv", index=False)
-        summaries["channel"] = summarize_channel_scan(ch_df)
+        summaries["channel"] = summarize_channel_scan(ch_df, n_images=len(ch_paths))
     else:
-        summaries["channel"] = {"n_rows": 0, "top_channels": []}
+        summaries["channel"] = {"n_rows": 0, "top_channels": [], "evaluation": {"status": "skipped", "evidence_strength": "none"}}
 
     risk_weights, risk_thresholds = load_risk_config(args.risk_config)
     decision = compute_risk_score(summaries, weights=risk_weights, thresholds=risk_thresholds)
