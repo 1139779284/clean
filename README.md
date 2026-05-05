@@ -260,6 +260,31 @@ python scripts/runtime_guard.py \
 guard.summary.json
 ```
 
+## 8. 本地毒模型回归 benchmark
+
+如果要验证扫描器是否能识别受控后门模型，可以在本地隔离目录生成小型 YOLO 毒模型 benchmark。该流程只用于防御回归，不要把生成的数据集或毒权重当成正常模型发布。
+
+```bash
+python scripts/benchmark_poisoned_yolo.py \
+  --source-images D:/clean_yolo/datasets/helmet_head_yolo_val/images/val \
+  --source-labels D:/clean_yolo/datasets/helmet_head_yolo_val/labels/val \
+  --base-model D:/clean_yolo/best.pt \
+  --reference-model existing_best2="D:/clean_yolo/best 2.pt" \
+  --out D:/clean_yolo/poison_benchmark \
+  --all
+```
+
+输出包括：
+
+```text
+benchmark_manifest.json
+asr_matrix.json
+poison_benchmark_report.md
+data/<attack>/
+models/<attack>_yolo/
+security_gate/<attack>_yolo_attack_eval/
+```
+
 ## 反事实扫描逻辑
 
 不知道 trigger 时，不问“trigger 是什么”，而是问：
