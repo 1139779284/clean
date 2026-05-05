@@ -4,8 +4,14 @@ thresholds:
   red_max: 75
   context_dependence_warn: 0.05
   target_removal_warn: 0.02
+  semantic_shortcut_warn: 0.05
+  context_color_dependency_warn: 0.05
   stress_bias_warn: 0.03
+  stress_vanish_warn: 0.03
+  deformation_instability_warn: 0.05
   slice_anomaly_warn: 0.01
+  global_false_positive_warn: 0.10
+  global_false_negative_warn: 0.10
   wrong_region_attention_warn: 0.01
   provenance_warn: 0.5
 weights:

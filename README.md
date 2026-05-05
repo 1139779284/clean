@@ -260,31 +260,6 @@ python scripts/runtime_guard.py \
 guard.summary.json
 ```
 
-## 8. 本地毒模型回归 benchmark
-
-如果要验证扫描器是否能识别受控后门模型，可以在本地隔离目录生成小型 YOLO 毒模型 benchmark。该流程只用于防御回归，不要把生成的数据集或毒权重当成正常模型发布。
-
-```bash
-python scripts/benchmark_poisoned_yolo.py \
-  --source-images D:/clean_yolo/datasets/helmet_head_yolo_val/images/val \
-  --source-labels D:/clean_yolo/datasets/helmet_head_yolo_val/labels/val \
-  --base-model D:/clean_yolo/best.pt \
-  --reference-model existing_best2="D:/clean_yolo/best 2.pt" \
-  --out D:/clean_yolo/poison_benchmark \
-  --all
-```
-
-输出包括：
-
-```text
-benchmark_manifest.json
-asr_matrix.json
-poison_benchmark_report.md
-data/<attack>/
-models/<attack>_yolo/
-security_gate/<attack>_yolo_attack_eval/
-```
-
 ## 反事实扫描逻辑
 
 不知道 trigger 时，不问“trigger 是什么”，而是问：
@@ -340,8 +315,6 @@ FP/backdoor proxy 降低 >= 80%
 - 统一 YAML + CLI override：`security_gate.py`、`strong_detox_yolo.py`、`detox_train_yolo.py` 支持 `--config`，并写出 `resolved_config.json` 方便复现实验。
 - 自动复检 hard fail：`strong_detox_yolo.py --fail-on-verify-error` 会在复检子流程失败时返回非零状态。
 - 弱监督风险边界：`feature_only` 和 self-pseudo 会在 `strong_detox_manifest.json` 中标记 `weak_supervision=true`。`acceptance_gate.py --detox-manifest ...` 默认不允许这类结果直接验收为安全通过；只有显式传 `--allow-weak-supervision` 才会放行。
-- 通道扫描稳定性门：`channel_scan` 报告现在包含 `evaluation.status`、`evidence_strength`、`high_risk_channels` 和样本量不足警告；`score_detox_channels.py` 会同时输出 `.summary.json`，避免把少量样本上的可疑通道误当成强证据。
-- `target_inpaint` 质量门：反事实数据集构建会自动评估 inpaint 区域面积、边界缝、纹理塌缩和边界上下文；失败样本默认跳过，并写入 `counterfactual_quality_manifest.json`。如需保留可显式传 `--keep-failed-inpaint`。
 
 示例：
 
@@ -368,3 +341,23 @@ python scripts/acceptance_gate.py \
 python -m compileall -q model_security_gate scripts tests
 python -m pytest -q
 ```
+
+## ASR-aware 强净化（用于 pseudo detox 后 ASR 仍高的情况）
+
+如果 `pseudo_detox_after` 的 ASR 仍有 35%-75%，它不是净化成功。此时应使用需要真实标签的 ASR-aware 强净化：
+
+```bash
+python scripts/asr_aware_detox_yolo.py \
+  --model path/to/pseudo_detox_after.pt \
+  --images dataset/images/train \
+  --labels dataset/labels/train \
+  --data-yaml dataset/data.yaml \
+  --target-classes helmet \
+  --out runs/asr_aware_detox \
+  --cycles 4 \
+  --epochs-per-cycle 10 \
+  --max-allowed-asr 0.10 \
+  --device 0
+```
+
+该流程会构建 badnet / blend / WaNet / ODA / semantic 的监督反事实集，按 ASR 回归结果选择 checkpoint。更多见 `ASR_AWARE_DETOX.md`。

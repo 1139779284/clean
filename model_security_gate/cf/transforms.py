@@ -17,14 +17,6 @@ class CounterfactualSpec:
     label_policy: str = "keep"  # keep, remove_target_labels, scan_only
 
 
-@dataclass
-class InpaintQualityConfig:
-    max_mask_area_frac: float = 0.35
-    max_boundary_seam_delta: float = 55.0
-    min_texture_var_ratio: float = 0.03
-    min_ring_pixels: int = 32
-
-
 def _fill_boxes(img: np.ndarray, boxes: Sequence[XYXY], color: Tuple[int, int, int] | None = None, expand: float = 0.0) -> np.ndarray:
     out = img.copy()
     h, w = out.shape[:2]
@@ -143,81 +135,42 @@ def assess_inpaint_quality(
     inpainted_bgr: np.ndarray,
     boxes: Sequence[XYXY],
     expand: float = 0.10,
-    cfg: InpaintQualityConfig | None = None,
+    max_mask_fraction: float = 0.35,
+    max_changed_fraction: float = 0.60,
 ) -> Dict[str, Any]:
-    """Estimate whether target removal is safe enough for detox training.
+    """Heuristic quality gate for target-inpaint counterfactuals.
 
-    This is a guardrail, not a perceptual proof. It rejects the failure modes
-    that most often poison counterfactual fine-tuning: huge removed regions,
-    missing boundary context, obvious seams, and texture collapse inside the
-    removed object area.
+    Inpainted samples are useful only when the removed target is local. If the
+    target mask covers most of the image, the generated hard negative becomes a
+    large synthetic artifact and can poison detox training. This lightweight
+    check intentionally errs on the conservative side.
     """
-    cfg = cfg or InpaintQualityConfig()
     h, w = original_bgr.shape[:2]
-    mask = union_mask_from_boxes((h, w), boxes, expand=expand)
-    mask_bool = mask > 0
-    area_frac = float(mask_bool.mean()) if mask_bool.size else 0.0
-
-    kernel = np.ones((3, 3), dtype=np.uint8)
-    dilated = cv2.dilate(mask, kernel, iterations=2) > 0
-    eroded = cv2.erode(mask, kernel, iterations=2) > 0
-    outside_ring = dilated & ~mask_bool
-    inside_ring = mask_bool & ~eroded
-
     reasons: List[str] = []
-    if area_frac <= 0.0:
-        reasons.append("empty_mask")
-    if area_frac > cfg.max_mask_area_frac:
+    if h <= 0 or w <= 0:
+        return {"accepted": False, "reasons": ["invalid_image"], "mask_fraction": 0.0, "changed_fraction": 0.0}
+
+    mask = union_mask_from_boxes((h, w), boxes, expand=expand)
+    mask_fraction = float((mask > 0).mean()) if mask.size else 0.0
+    changed = np.any(original_bgr != inpainted_bgr, axis=2)
+    changed_fraction = float(changed.mean()) if changed.size else 0.0
+
+    if not boxes:
+        reasons.append("no_target_boxes")
+    if mask_fraction > float(max_mask_fraction):
         reasons.append("mask_too_large")
-    if int(outside_ring.sum()) < cfg.min_ring_pixels or int(inside_ring.sum()) < cfg.min_ring_pixels:
-        reasons.append("insufficient_boundary_context")
-
-    seam_delta = 0.0
-    texture_var_ratio = 1.0
-    if not reasons or "insufficient_boundary_context" not in reasons:
-        inside_mean = inpainted_bgr[inside_ring].astype(np.float32).mean(axis=0)
-        outside_mean = inpainted_bgr[outside_ring].astype(np.float32).mean(axis=0)
-        seam_delta = float(np.abs(inside_mean - outside_mean).mean())
-        if seam_delta > cfg.max_boundary_seam_delta:
-            reasons.append("boundary_seam_high")
-
-        gray = cv2.cvtColor(inpainted_bgr, cv2.COLOR_BGR2GRAY)
-        lap = cv2.Laplacian(gray, cv2.CV_32F)
-        inside_var = float(lap[mask_bool].var()) if mask_bool.any() else 0.0
-        outside_var = float(lap[outside_ring].var()) if outside_ring.any() else 0.0
-        texture_var_ratio = inside_var / (outside_var + 1e-6)
-        if area_frac > 0.02 and texture_var_ratio < cfg.min_texture_var_ratio:
-            reasons.append("texture_collapse")
-
-    changed_delta = 0.0
-    if mask_bool.any():
-        changed_delta = float(np.abs(inpainted_bgr.astype(np.float32) - original_bgr.astype(np.float32))[mask_bool].mean())
+    if changed_fraction > float(max_changed_fraction):
+        reasons.append("change_too_large")
+    if original_bgr.shape != inpainted_bgr.shape:
+        reasons.append("shape_mismatch")
 
     return {
         "accepted": not reasons,
         "reasons": reasons,
-        "mask_area_frac": area_frac,
-        "boundary_seam_delta": seam_delta,
-        "texture_var_ratio": texture_var_ratio,
-        "changed_delta": changed_delta,
-        "criteria": {
-            "max_mask_area_frac": cfg.max_mask_area_frac,
-            "max_boundary_seam_delta": cfg.max_boundary_seam_delta,
-            "min_texture_var_ratio": cfg.min_texture_var_ratio,
-            "min_ring_pixels": cfg.min_ring_pixels,
-        },
+        "mask_fraction": mask_fraction,
+        "changed_fraction": changed_fraction,
+        "n_boxes": len(list(boxes)),
     }
-
-
-def inpaint_boxes_with_quality(
-    img: np.ndarray,
-    boxes: Sequence[XYXY],
-    expand: float = 0.10,
-    radius: int = 3,
-    quality_cfg: InpaintQualityConfig | None = None,
-) -> tuple[np.ndarray, Dict[str, Any]]:
-    out = inpaint_boxes(img, boxes, expand=expand, radius=radius)
-    return out, assess_inpaint_quality(img, out, boxes, expand=expand, cfg=quality_cfg)
 
 
 class CounterfactualGenerator:
@@ -295,12 +248,11 @@ class CounterfactualGenerator:
                     )
             elif name == "target_inpaint":
                 if target_boxes:
-                    inpainted, quality = inpaint_boxes_with_quality(image_bgr, target_boxes)
                     specs.append(
                         CounterfactualSpec(
                             name,
-                            inpainted,
-                            {"type": "target_removal", "target_boxes": target_boxes, "quality": quality},
+                            inpaint_boxes(image_bgr, target_boxes),
+                            {"type": "target_removal", "target_boxes": target_boxes},
                             label_policy="remove_target_labels",
                         )
                     )

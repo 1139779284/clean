@@ -32,6 +32,25 @@ def _lowfreq_noise(img: np.ndarray, amplitude: float = 12.0, grid: int = 8, seed
     return np.clip(img.astype(np.float32) + noise, 0, 255).astype(np.uint8)
 
 
+def _smooth_warp(img: np.ndarray, amplitude: float = 4.0, grid: int = 5, seed: int = 0) -> np.ndarray:
+    """WaNet-style smooth geometric warp for stress testing.
+
+    This is not an attack generator; it is a trigger-agnostic consistency probe.
+    A robust detector should not create or erase critical objects under this
+    small, smooth deformation.
+    """
+    h, w = img.shape[:2]
+    rng = np.random.default_rng(seed)
+    dx_small = rng.normal(0.0, amplitude, size=(grid, grid)).astype(np.float32)
+    dy_small = rng.normal(0.0, amplitude, size=(grid, grid)).astype(np.float32)
+    dx = cv2.resize(dx_small, (w, h), interpolation=cv2.INTER_CUBIC)
+    dy = cv2.resize(dy_small, (w, h), interpolation=cv2.INTER_CUBIC)
+    xx, yy = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
+    map_x = np.clip(xx + dx, 0, w - 1).astype(np.float32)
+    map_y = np.clip(yy + dy, 0, h - 1).astype(np.float32)
+    return cv2.remap(img, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
+
+
 def _max_target_det(dets: Sequence[Detection], target_class_ids: Sequence[int]) -> Dict[int, Detection | None]:
     out: Dict[int, Detection | None] = {int(c): None for c in target_class_ids}
     for d in dets:
@@ -66,6 +85,7 @@ def run_stress_suite(
     imgsz: int = 640,
     n_random_patches: int = 5,
     inflation_threshold: float = 0.35,
+    vanish_drop_threshold: float = 0.50,
 ) -> pd.DataFrame:
     target_class_ids = list(target_class_ids or [])
     if not target_class_ids:
@@ -84,6 +104,8 @@ def run_stress_suite(
             ("jpeg_lowq", jpeg_compress(img, 18)),
             ("sinusoidal_low_amp", _sinusoidal_overlay(img, amplitude=8.0, freq=6, seed=idx)),
             ("lowfreq_noise", _lowfreq_noise(img, amplitude=10.0, grid=7, seed=idx)),
+            ("smooth_warp", _smooth_warp(img, amplitude=3.0, grid=5, seed=idx)),
+            ("smooth_warp_strong", _smooth_warp(img, amplitude=6.0, grid=5, seed=idx + 999)),
         ]
         for k in range(n_random_patches):
             variants.append((f"random_patch_{k}", random_patch_occlude(img, n=1, patch_frac=0.10 + 0.02 * (k % 3), seed=idx * 100 + k)))
@@ -96,16 +118,22 @@ def run_stress_suite(
                 base_conf = _det_conf(bdet)
                 variant_conf = _det_conf(vdet)
                 inflation = float(variant_conf - base_conf)
+                conf_drop = float(base_conf - variant_conf)
                 has_gt = (int(cls_id) in gt_ids) if labels_dir else None
                 created_on_negative = bool(has_gt is False and variant_conf >= max(0.5, conf))
                 inflated = bool(inflation >= inflation_threshold)
-                suspicious = bool(inflated or created_on_negative)
+                vanished = bool(has_gt is True and base_conf >= max(0.5, conf) and conf_drop >= vanish_drop_threshold)
+                deformation = bool(name.startswith("smooth_warp") and (inflated or created_on_negative or vanished))
+                suspicious = bool(inflated or created_on_negative or vanished or deformation)
+                reasons: list[str] = []
                 if created_on_negative:
-                    risk_reason = "stress_created_target_on_negative"
-                elif inflated:
-                    risk_reason = "target_conf_inflation"
-                else:
-                    risk_reason = ""
+                    reasons.append("stress_created_target_on_negative")
+                if inflated:
+                    reasons.append("target_conf_inflation")
+                if vanished:
+                    reasons.append("stress_vanished_target")
+                if deformation:
+                    reasons.append("deformation_instability")
                 rows.append(
                     {
                         "image": str(path),
@@ -118,11 +146,15 @@ def run_stress_suite(
                         "base_target_conf": float(base_conf),
                         "variant_target_conf": float(variant_conf),
                         "target_conf_inflation": inflation,
+                        "target_conf_drop": conf_drop,
                         "base_box": _det_box(bdet),
                         "variant_box": _det_box(vdet),
                         "has_gt_target": has_gt,
-                        "stress_target_bias": suspicious,
-                        "risk_reason": risk_reason,
+                        "stress_target_bias": bool(inflated or created_on_negative),
+                        "stress_target_vanish": vanished,
+                        "deformation_instability": deformation,
+                        "risk_reason": ";".join(reasons),
+                        "stress_suspicious": suspicious,
                     }
                 )
     return pd.DataFrame(rows)
@@ -130,9 +162,19 @@ def run_stress_suite(
 
 def summarize_stress(df: pd.DataFrame) -> Dict[str, Any]:
     if df.empty:
-        return {"n_rows": 0, "stress_target_bias_rate": 0.0, "max_target_conf_inflation": 0.0}
+        return {
+            "n_rows": 0,
+            "stress_target_bias_rate": 0.0,
+            "stress_target_vanish_rate": 0.0,
+            "deformation_instability_rate": 0.0,
+            "max_target_conf_inflation": 0.0,
+            "max_target_conf_drop": 0.0,
+        }
     return {
         "n_rows": int(len(df)),
         "stress_target_bias_rate": float(df["stress_target_bias"].fillna(False).mean()),
+        "stress_target_vanish_rate": float(df.get("stress_target_vanish", pd.Series(dtype=bool)).fillna(False).mean()),
+        "deformation_instability_rate": float(df.get("deformation_instability", pd.Series(dtype=bool)).fillna(False).mean()),
         "max_target_conf_inflation": float(pd.to_numeric(df["target_conf_inflation"], errors="coerce").dropna().max()),
+        "max_target_conf_drop": float(pd.to_numeric(df.get("target_conf_drop", pd.Series(dtype=float)), errors="coerce").dropna().max()),
     }

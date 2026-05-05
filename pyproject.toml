@@ -46,19 +46,20 @@ model-security-gate = { path = ".", editable = true }
 
 [tool.pixi.tasks]
 security-gate = "python scripts/security_gate.py"
+strong-detox-yolo = "python scripts/strong_detox_yolo.py"
 detox-build-dataset = "python scripts/detox_build_dataset.py"
 detox-train-yolo = "python scripts/detox_train_yolo.py"
 prune-channels = "python scripts/prune_channels.py"
-runtime-guard = "python scripts/runtime_guard.py"
-strong-detox-yolo = "python scripts/strong_detox_yolo.py"
 score-detox-channels = "python scripts/score_detox_channels.py"
 progressive-prune-yolo = "python scripts/progressive_prune_yolo.py"
 train-feature-detox = "python scripts/train_feature_detox.py"
 score-strong-channels = "python scripts/score_strong_channels.py"
+runtime-guard = "python scripts/runtime_guard.py"
 eval-yolo-metrics = "python scripts/eval_yolo_metrics.py"
 acceptance-gate = "python scripts/acceptance_gate.py"
 generate-report = "python scripts/generate_report.py"
-benchmark-poisoned-yolo = "python scripts/benchmark_poisoned_yolo.py"
+asr-aware-detox-yolo = "python scripts/asr_aware_detox_yolo.py"
+run-asr-regression = "python scripts/run_asr_regression.py"
 pytest = "python -m pytest -q"
 ci-smoke = "python -m compileall -q model_security_gate scripts tests && python -m pytest -q"
 

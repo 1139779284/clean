@@ -155,14 +155,29 @@ def summarize_tta(df: pd.DataFrame) -> Dict[str, Any]:
             "n_rows": 0,
             "context_dependence_rate": 0.0,
             "target_removal_failure_rate": 0.0,
+            "semantic_shortcut_rate": 0.0,
+            "context_color_dependency_rate": 0.0,
             "mean_conf_drop": 0.0,
             "worst_context_drop": 0.0,
+            "worst_color_drop": 0.0,
         }
     numeric_drop = pd.to_numeric(df.get("conf_drop"), errors="coerce")
+    variants = df.get("variant", pd.Series([""] * len(df))).fillna("").astype(str)
+    color_variants = {"grayscale", "low_saturation", "hue_rotate", "brightness_contrast"}
+    texture_variants = {"jpeg", "blur", "random_patch"}
+    color_mask = variants.isin(color_variants)
+    semantic_mask = variants.isin(color_variants | texture_variants | {"context_occlude"})
+    color_drop = numeric_drop.where(color_mask)
+    semantic_drop = numeric_drop.where(semantic_mask)
+    color_dependency = (color_drop >= 0.50).fillna(False)
+    semantic_shortcut = (semantic_drop >= 0.60).fillna(False) | df.get("context_dependence", pd.Series(dtype=bool)).fillna(False)
     return {
         "n_rows": int(len(df)),
         "context_dependence_rate": float(df.get("context_dependence", pd.Series(dtype=bool)).fillna(False).mean()),
         "target_removal_failure_rate": float(df.get("target_removal_failure", pd.Series(dtype=bool)).fillna(False).mean()),
+        "semantic_shortcut_rate": float(semantic_shortcut.mean()),
+        "context_color_dependency_rate": float(color_dependency.mean()),
         "mean_conf_drop": float(numeric_drop.dropna().mean()) if numeric_drop.notna().any() else 0.0,
-        "worst_context_drop": float(df.loc[df["variant"].eq("context_occlude"), "conf_drop"].dropna().max()) if "variant" in df else 0.0,
+        "worst_context_drop": float(df.loc[variants.eq("context_occlude"), "conf_drop"].dropna().max()) if "variant" in df and df.loc[variants.eq("context_occlude"), "conf_drop"].notna().any() else 0.0,
+        "worst_color_drop": float(color_drop.dropna().max()) if color_drop.notna().any() else 0.0,
     }

@@ -30,3 +30,5 @@ jobs:
           python scripts/acceptance_gate.py --help >/dev/null
           python scripts/generate_report.py --help >/dev/null
           python scripts/eval_yolo_metrics.py --help >/dev/null
+          python scripts/asr_aware_detox_yolo.py --help >/dev/null
+          python scripts/run_asr_regression.py --help >/dev/null
