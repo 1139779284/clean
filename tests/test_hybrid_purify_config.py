@@ -1,8 +1,10 @@
 from pathlib import Path
 
 import yaml
+import torch
 
 from model_security_gate.detox.hybrid_purify_train import _same_root_sets, _torch_device_arg
+from model_security_gate.detox.strong_train import _torch_model
 
 
 def test_hybrid_purify_config_has_required_sections():
@@ -36,3 +38,13 @@ def test_hybrid_feature_purifier_normalizes_numeric_cuda_device():
     assert _torch_device_arg(0) == "cuda:0"
     assert _torch_device_arg("0") == "cuda:0"
     assert _torch_device_arg("cuda:1") == "cuda:1"
+
+
+def test_strong_train_prefers_ultralytics_inner_model():
+    class Wrapper(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = torch.nn.Linear(1, 1)
+
+    wrapper = Wrapper()
+    assert _torch_model(wrapper) is wrapper.model

@@ -106,10 +106,10 @@ def save_ultralytics_yolo(yolo, path: str | Path) -> Path:
 
 
 def _torch_model(yolo_or_model) -> torch.nn.Module:
-    if isinstance(yolo_or_model, torch.nn.Module):
-        return yolo_or_model
     if hasattr(yolo_or_model, "model") and isinstance(yolo_or_model.model, torch.nn.Module):
         return yolo_or_model.model
+    if isinstance(yolo_or_model, torch.nn.Module):
+        return yolo_or_model
     raise TypeError("Expected Ultralytics YOLO wrapper or torch model")
 
 
