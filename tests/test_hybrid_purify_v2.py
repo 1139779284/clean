@@ -1,4 +1,5 @@
 from model_security_gate.detox.hybrid_purify_train import HybridPurifyConfig, compare_asr_matrices, _hybrid_selection_score
+from model_security_gate.detox.external_hard_suite import score_for_attack_name
 from model_security_gate.detox.rnp import RNPConfig
 
 
@@ -27,3 +28,14 @@ def test_phase_level_selection_defaults_are_safe():
     cfg = HybridPurifyConfig()
     assert cfg.evaluate_each_phase is True
     assert cfg.rollback_bad_phase is True
+
+
+def test_attack_score_matching_keeps_oga_and_oda_separate():
+    scores = {
+        "badnet_oga": 1.0,
+        "wanet_oga": 1.0,
+        "poison_benchmark::badnet_oda": 0.875,
+        "poison_benchmark::blend_oga": 0.275,
+    }
+    assert score_for_attack_name(scores, "badnet_oda", kind="badnet_patch", goal="oda") == 0.875
+    assert score_for_attack_name(scores, "blend_oga", kind="blend", goal="oga") == 0.275

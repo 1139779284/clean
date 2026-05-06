@@ -353,19 +353,34 @@ def attack_score_lookup(summary: Mapping[str, Any] | None) -> Dict[str, float]:
 
 def score_for_attack_name(scores: Mapping[str, float], attack_name: str, kind: str | None = None, goal: str | None = None) -> float:
     name = str(attack_name).lower()
-    candidates = [name]
-    if kind:
-        candidates.append(str(kind).lower())
-    if goal:
-        candidates.append(str(goal).lower())
+    kind_low = str(kind or "").lower()
+    goal_low = str(goal or "").lower()
+    kind_aliases = {kind_low}
+    if kind_low.endswith("_patch"):
+        kind_aliases.add(kind_low[: -len("_patch")])
+    if kind_low == "badnet_patch":
+        kind_aliases.add("badnet")
+
     best = 0.0
+    fallback = 0.0
     for key, value in scores.items():
         low = str(key).lower()
-        if low == name or name in low or low in name:
+        tail = low.split("::")[-1]
+        if tail == name or name in tail or tail in name:
             best = max(best, float(value))
             continue
-        if any(c and c in low for c in candidates[1:]):
+        if kind_low and goal_low and any(alias and alias in tail for alias in kind_aliases) and goal_low in tail:
             best = max(best, float(value))
+            continue
+        if kind_low and not goal_low and any(alias and alias in tail for alias in kind_aliases):
+            fallback = max(fallback, float(value))
+            continue
+        if goal_low and goal_low in tail:
+            fallback = max(fallback, float(value))
+    if best > 0:
+        return best
+    if fallback > 0:
+        return fallback
     return best
 
 
