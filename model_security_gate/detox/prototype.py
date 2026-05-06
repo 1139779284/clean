@@ -130,3 +130,48 @@ def prototype_alignment_loss(
     if not losses:
         return torch.tensor(0.0, device=batch["img"].device)
     return torch.stack(losses).mean()
+
+
+def target_prototype_suppression_loss(
+    features: Dict[str, torch.Tensor],
+    batch: Dict[str, Any],
+    bank: PrototypeBank,
+    target_class_ids: Sequence[int],
+    margin: float = 0.25,
+) -> torch.Tensor:
+    """PGBD-style suppression for target-absent samples.
+
+    For images that do not contain a target-class object, an attention-weighted
+    global feature should not look like any target-class prototype. This directly
+    attacks OGA/semantic shortcut behavior: a trigger or context patch should not
+    move a background/person region toward the helmet/head prototype.
+    """
+    feat = features.get(bank.layer_name)
+    if feat is None or feat.ndim != 4 or not bank.prototypes or not target_class_ids:
+        return torch.tensor(0.0, device=batch["img"].device)
+    target_protos = [bank.prototypes.get(int(cid)) for cid in target_class_ids if int(cid) in bank.prototypes]
+    target_protos = [p for p in target_protos if p is not None]
+    if not target_protos:
+        return torch.tensor(0.0, device=batch["img"].device)
+    target_protos = [F.normalize(p.to(feat.device).float(), dim=0) for p in target_protos]
+
+    cls = batch.get("cls", torch.zeros((0, 1), device=feat.device)).view(-1).long()
+    bidx = batch.get("batch_idx", torch.zeros((0,), device=feat.device)).long()
+    target_ids = torch.tensor([int(x) for x in target_class_ids], device=feat.device, dtype=torch.long)
+    losses: List[torch.Tensor] = []
+    bsz = feat.shape[0]
+    # Attention-weighted global feature: focuses suppression on dominant evidence.
+    attn = feat.abs().mean(dim=1, keepdim=True)
+    attn = attn / attn.flatten(1).sum(dim=1).view(-1, 1, 1, 1).clamp_min(1e-6)
+    pooled = (feat.float() * attn).sum(dim=(2, 3))
+    pooled = F.normalize(pooled, dim=1)
+    for i in range(bsz):
+        if len(cls) and ((bidx == i) & (cls[:, None] == target_ids[None, :]).any(dim=1)).any():
+            continue
+        sims = [F.cosine_similarity(pooled[i : i + 1], proto.view(1, -1), dim=1).mean() for proto in target_protos]
+        if sims:
+            max_sim = torch.stack(sims).max()
+            losses.append(F.relu(max_sim - float(margin)))
+    if not losses:
+        return torch.tensor(0.0, device=feat.device)
+    return torch.stack(losses).mean()

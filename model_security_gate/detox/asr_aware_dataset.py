@@ -56,39 +56,11 @@ class ASRAwareDatasetConfig:
 
 def default_attack_suite() -> List[AttackTransformConfig]:
     return [
-        AttackTransformConfig(
-            "badnet_oga",
-            kind="badnet_patch",
-            goal="oga",
-            poison_negative=True,
-            poison_positive=False,
-            params={"patch_frac": 0.09, "position": "br"},
-        ),
-        AttackTransformConfig(
-            "blend_oga",
-            kind="blend",
-            goal="oga",
-            poison_negative=True,
-            poison_positive=False,
-            params={"alpha": 0.18, "freq": 8},
-        ),
-        AttackTransformConfig(
-            "wanet_oga",
-            kind="wanet",
-            goal="oga",
-            poison_negative=True,
-            poison_positive=False,
-            params={"amplitude": 0.05, "grid": 5},
-        ),
-        AttackTransformConfig(
-            "badnet_oda",
-            kind="badnet_patch",
-            goal="oda",
-            poison_negative=False,
-            poison_positive=True,
-            params={"patch_frac": 0.09, "position": "br"},
-        ),
-        AttackTransformConfig("semantic_green_cleanlabel", kind="semantic_green", goal="semantic", params={"strength": 0.42}),
+        AttackTransformConfig("badnet_oga", kind="badnet_patch", goal="oga", poison_negative=True, poison_positive=False, params={"patch_frac": 0.09, "position": "br"}),
+        AttackTransformConfig("blend_oga", kind="blend", goal="oga", poison_negative=True, poison_positive=False, params={"alpha": 0.18, "freq": 8}),
+        AttackTransformConfig("wanet_oga", kind="wanet", goal="oga", poison_negative=True, poison_positive=False, params={"amplitude": 0.05, "grid": 5}),
+        AttackTransformConfig("badnet_oda", kind="badnet_patch", goal="oda", poison_negative=False, poison_positive=True, params={"patch_frac": 0.09, "position": "br"}),
+        AttackTransformConfig("semantic_green_cleanlabel", kind="semantic_green", goal="semantic", poison_negative=True, poison_positive=True, params={"strength": 0.42}),
     ]
 
 

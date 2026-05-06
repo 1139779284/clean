@@ -1,0 +1,57 @@
+hybrid_purify_detox:
+  model: null
+  teacher_model: null
+  images: null
+  labels: null
+  data_yaml: null
+  target_classes: null
+  external_eval_roots: []
+  external_replay_roots: []
+  out: runs/hybrid_purify_detox
+  imgsz: 640
+  batch: 8
+  device: null
+  cycles: 4
+  phase_epochs: 2
+  feature_epochs: 2
+  recovery_epochs: 2
+  max_allowed_external_asr: 0.10
+  max_allowed_internal_asr: 0.10
+  max_map_drop: 0.03
+  external_eval_max_images_per_attack: 0
+  external_replay_max_images_per_attack: 250
+  run_feature_purifier: true
+  run_clean_recovery_finetune: true
+  trusted_teacher_required: false
+  amp: false
+  attacks:
+    - name: badnet_oga
+      kind: badnet_patch
+      goal: oga
+      poison_negative: true
+      poison_positive: false
+      params: {patch_frac: 0.09, position: br}
+    - name: blend_oga
+      kind: blend
+      goal: oga
+      poison_negative: true
+      poison_positive: false
+      params: {alpha: 0.18, freq: 8}
+    - name: wanet_oga
+      kind: wanet
+      goal: oga
+      poison_negative: true
+      poison_positive: false
+      params: {amplitude: 0.05, grid: 5}
+    - name: badnet_oda
+      kind: badnet_patch
+      goal: oda
+      poison_negative: false
+      poison_positive: true
+      params: {patch_frac: 0.09, position: br}
+    - name: semantic_green_cleanlabel
+      kind: semantic_green
+      goal: semantic
+      poison_negative: true
+      poison_positive: true
+      params: {strength: 0.42}

@@ -29,6 +29,14 @@ __all__ = [
     "build_asr_aware_yolo_dataset",
     "run_asr_regression",
     "run_asr_aware_detox_yolo",
+    "ExternalAttackDataset",
+    "ExternalHardSuiteConfig",
+    "run_external_hard_suite",
+    "run_external_hard_suite_for_yolo",
+    "ASRClosedLoopConfig",
+    "run_asr_closed_loop_detox_yolo",
+    "HybridPurifyConfig",
+    "run_hybrid_purify_detox_yolo",
 ]
 
 
@@ -95,4 +103,32 @@ def __getattr__(name: str):
         from .asr_aware_train import ASRAwareTrainConfig, run_asr_aware_detox_yolo
 
         return {"ASRAwareTrainConfig": ASRAwareTrainConfig, "run_asr_aware_detox_yolo": run_asr_aware_detox_yolo}[name]
+
+    if name in {
+        "ExternalAttackDataset",
+        "ExternalHardSuiteConfig",
+        "run_external_hard_suite",
+        "run_external_hard_suite_for_yolo",
+    }:
+        from .external_hard_suite import (
+            ExternalAttackDataset,
+            ExternalHardSuiteConfig,
+            run_external_hard_suite,
+            run_external_hard_suite_for_yolo,
+        )
+
+        return {
+            "ExternalAttackDataset": ExternalAttackDataset,
+            "ExternalHardSuiteConfig": ExternalHardSuiteConfig,
+            "run_external_hard_suite": run_external_hard_suite,
+            "run_external_hard_suite_for_yolo": run_external_hard_suite_for_yolo,
+        }[name]
+    if name in {"ASRClosedLoopConfig", "run_asr_closed_loop_detox_yolo"}:
+        from .asr_closed_loop_train import ASRClosedLoopConfig, run_asr_closed_loop_detox_yolo
+
+        return {"ASRClosedLoopConfig": ASRClosedLoopConfig, "run_asr_closed_loop_detox_yolo": run_asr_closed_loop_detox_yolo}[name]
+    if name in {"HybridPurifyConfig", "run_hybrid_purify_detox_yolo"}:
+        from .hybrid_purify_train import HybridPurifyConfig, run_hybrid_purify_detox_yolo
+
+        return {"HybridPurifyConfig": HybridPurifyConfig, "run_hybrid_purify_detox_yolo": run_hybrid_purify_detox_yolo}[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

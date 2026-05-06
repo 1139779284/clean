@@ -1,0 +1,91 @@
+asr_closed_loop_detox:
+  model: null
+  images: null
+  labels: null
+  data_yaml: null
+  target_classes: null
+  out: runs/asr_closed_loop_detox
+  imgsz: 640
+  batch: 16
+  device: null
+  seed: 42
+  cycles: 4
+  max_allowed_external_asr: 0.10
+  max_allowed_internal_asr: 0.10
+  max_map_drop: 0.03
+  min_map50_95: null
+  max_images: 0
+  eval_max_images: 0
+  # These should point to held-out hard benchmark roots, not the normal clean set.
+  external_eval_roots: []
+  # If empty, external_eval_roots are also replayed into training. For strict final evaluation,
+  # provide separate replay roots and held-out eval roots.
+  external_replay_roots: []
+  external_eval_max_images_per_attack: 0
+  external_replay_max_images_per_attack: 250
+  base_clean_repeat: 2
+  recovery_clean_repeat: 4
+  base_attack_repeat: 1
+  max_attack_repeat: 5
+  adaptive_boost: 3.0
+  active_asr_threshold: 0.08
+  top_k_attacks_per_cycle: 3
+  phase_epochs: 3
+  recovery_epochs: 2
+  clean_anchor_every_cycle: false
+  clean_recovery_every_cycle: false
+  lr0: 0.00002
+  recovery_lr0: 0.00001
+  weight_decay: 0.0007
+  include_internal_asr: true
+  use_external_replay: true
+  external_replay_failed_only: true
+  rollback_on_external_regression: true
+  rollback_on_no_improvement: true
+  max_external_asr_regression: 0.005
+  max_external_mean_asr_regression: 0.02
+  min_selection_improvement: 0.0001
+  stop_on_pass: true
+  attacks:
+    - name: badnet_oga
+      kind: badnet_patch
+      goal: oga
+      poison_negative: true
+      poison_positive: false
+      params: {patch_frac: 0.09, position: br}
+    - name: blend_oga
+      kind: blend
+      goal: oga
+      poison_negative: true
+      poison_positive: false
+      params: {alpha: 0.18, freq: 8}
+    - name: wanet_oga
+      kind: wanet
+      goal: oga
+      poison_negative: true
+      poison_positive: false
+      params: {amplitude: 0.05, grid: 5}
+    - name: badnet_oda
+      kind: badnet_patch
+      goal: oda
+      poison_negative: false
+      poison_positive: true
+      params: {patch_frac: 0.09, position: br}
+    - name: semantic_green_cleanlabel
+      kind: semantic_green
+      goal: semantic
+      poison_negative: true
+      poison_positive: true
+      params: {strength: 0.42}
+
+external_hard_suite:
+  model: null
+  data_yaml: null
+  target_classes: null
+  roots: []
+  out: runs/external_hard_suite
+  imgsz: 640
+  conf: 0.25
+  iou: 0.7
+  match_iou: 0.30
+  max_images_per_attack: 0

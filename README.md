@@ -361,3 +361,51 @@ python scripts/asr_aware_detox_yolo.py \
 ```
 
 该流程会构建 badnet / blend / WaNet / ODA / semantic 的监督反事实集，按 ASR 回归结果选择 checkpoint。更多见 `ASR_AWARE_DETOX.md`。
+
+## External-hard-suite closed-loop ASR detox
+
+If `asr_aware_detox_yolo.py` proves ASR can be reduced but cannot satisfy both external ASR and clean mAP, use the external closed-loop mode:
+
+```bash
+python scripts/asr_closed_loop_detox_yolo.py \
+  --model "best 2.pt" \
+  --images dataset/images/train \
+  --labels dataset/labels/train \
+  --data-yaml dataset/data.yaml \
+  --target-classes helmet \
+  --external-eval-roots poison_benchmark_cuda_large poison_benchmark_cuda_tuned \
+  --out runs/asr_closed_loop_best2 \
+  --cycles 4 \
+  --phase-epochs 3 \
+  --recovery-epochs 2 \
+  --max-allowed-external-asr 0.10 \
+  --max-map-drop 0.03
+```
+
+This mode separates OGA / ODA / semantic / WaNet hardening phases, replays external hard-suite samples with correct labels, runs external ASR after every cycle, and selects checkpoints using external ASR plus clean mAP. See `ASR_CLOSED_LOOP_DETOX.md`.
+
+## Hybrid-PURIFY-OD feature-level detox
+
+当 external closed-loop 仍卡在高 ASR、尤其是 `badnet_oda` / `semantic` / `wanet` 与 clean mAP 难以同时满足时，使用 Hybrid-PURIFY-OD。它在 external hard-suite replay/selection 之外加入 feature-level 净化：
+
+```bash
+python scripts/hybrid_purify_detox_yolo.py \
+  --model "best 2.pt" \
+  --teacher-model path/to/clean_teacher.pt \
+  --images dataset/images/train \
+  --labels dataset/labels/train \
+  --data-yaml dataset/data.yaml \
+  --target-classes helmet \
+  --external-replay-roots poison_benchmark_cuda_large \
+  --external-eval-roots poison_benchmark_cuda_tuned \
+  --out runs/hybrid_purify_best2 \
+  --cycles 4 \
+  --phase-epochs 2 \
+  --feature-epochs 2 \
+  --recovery-epochs 2 \
+  --max-allowed-external-asr 0.10 \
+  --max-map-drop 0.03 \
+  --device 0
+```
+
+该模式组合 PGBD-style prototype suppression、target-present prototype alignment、I-BAU-style adversarial unlearning、NAD/feature/output distillation 和 clean recovery。没有可信 teacher 时会 fallback 到 frozen suspicious model，只能算风险降低，不能当生产安全证明。更多见 `HYBRID_PURIFY_DETOX.md` 和 `docs/PROJECT_STATUS_2026-05-06.md`。

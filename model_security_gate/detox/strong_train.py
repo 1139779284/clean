@@ -23,7 +23,7 @@ from model_security_gate.detox.losses import (
     raw_prediction,
     supervised_yolo_loss,
 )
-from model_security_gate.detox.prototype import PrototypeBank, build_prototype_bank, prototype_alignment_loss
+from model_security_gate.detox.prototype import PrototypeBank, build_prototype_bank, prototype_alignment_loss, target_prototype_suppression_loss
 from model_security_gate.detox.yolo_dataset import make_yolo_dataloader, move_batch_to_device, parse_yolo_data_yaml
 from model_security_gate.utils.io import json_default, write_json
 
@@ -67,6 +67,8 @@ class StrongDetoxConfig:
     lambda_nad: float = 0.5
     lambda_attention: float = 0.2
     lambda_prototype: float = 0.25
+    lambda_proto_suppress: float = 0.0
+    prototype_suppress_margin: float = 0.25
 
     # I-BAU-style adversarial unlearning
     adv_eps: float = 4.0 / 255.0
@@ -225,6 +227,7 @@ def run_strong_detox_training(cfg: StrongDetoxConfig) -> Dict[str, Any]:
         "loss_nad",
         "loss_attention",
         "loss_prototype",
+        "loss_proto_suppress",
     ]
     with open(log_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
@@ -267,6 +270,9 @@ def run_strong_detox_training(cfg: StrongDetoxConfig) -> Dict[str, Any]:
                 loss_nad = nad_attention_loss(s_feats, t_feats) * float(cfg.lambda_nad) if cfg.use_teacher and s_feats else loss_task * 0.0
                 loss_attention = attention_localization_loss(s_feats, batch, cfg.target_class_ids) * float(cfg.lambda_attention) if cfg.use_attention and cfg.target_class_ids and s_feats else loss_task * 0.0
                 loss_prototype = prototype_alignment_loss(s_feats, batch, prototype_bank) * float(cfg.lambda_prototype) if prototype_bank is not None and s_feats else loss_task * 0.0
+                loss_proto_suppress = target_prototype_suppression_loss(
+                    s_feats, batch, prototype_bank, cfg.target_class_ids, margin=float(cfg.prototype_suppress_margin)
+                ) * float(cfg.lambda_proto_suppress) if prototype_bank is not None and s_feats and cfg.target_class_ids else loss_task * 0.0
 
                 if cfg.lambda_adv > 0 and cfg.adv_steps > 0:
                     adv_img = pgd_adversarial_images(
@@ -283,7 +289,7 @@ def run_strong_detox_training(cfg: StrongDetoxConfig) -> Dict[str, Any]:
                 else:
                     loss_adv = loss_task * 0.0
 
-                loss_total = loss_task + loss_adv + loss_output_distill + loss_feature_distill + loss_nad + loss_attention + loss_prototype
+                loss_total = loss_task + loss_adv + loss_output_distill + loss_feature_distill + loss_nad + loss_attention + loss_prototype + loss_proto_suppress
 
             scaler.scale(loss_total).backward()
             if cfg.grad_clip_norm and cfg.grad_clip_norm > 0:
@@ -303,6 +309,7 @@ def run_strong_detox_training(cfg: StrongDetoxConfig) -> Dict[str, Any]:
                 "loss_nad": _safe_float(loss_nad),
                 "loss_attention": _safe_float(loss_attention),
                 "loss_prototype": _safe_float(loss_prototype),
+                "loss_proto_suppress": _safe_float(loss_proto_suppress),
             }
             epoch_losses.append(row["loss_total"])
             pbar.set_postfix({"loss": f"{row['loss_total']:.4f}", "task": f"{row['loss_task']:.4f}"})
