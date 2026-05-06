@@ -24,6 +24,18 @@ from model_security_gate.detox.common import find_ultralytics_weight
 from model_security_gate.utils.io import resolve_class_ids, write_json
 
 
+def _same_root_sets(left: Sequence[str], right: Sequence[str]) -> bool:
+    if not left or not right or len(left) != len(right):
+        return False
+    try:
+        left_set = {str(Path(p).resolve()).lower() for p in left}
+        right_set = {str(Path(p).resolve()).lower() for p in right}
+    except OSError:
+        left_set = {str(Path(p)).lower() for p in left}
+        right_set = {str(Path(p)).lower() for p in right}
+    return left_set == right_set
+
+
 @dataclass
 class HybridPurifyConfig:
     """External-suite driven feature-level detox for YOLO detectors.
@@ -263,6 +275,7 @@ def run_hybrid_purify_detox_yolo(
 
     replay_roots = list(cfg.external_replay_roots or cfg.external_eval_roots or [])
     eval_roots = list(cfg.external_eval_roots or cfg.external_replay_roots or [])
+    replay_failed_only = _same_root_sets(replay_roots, eval_roots)
     replay_datasets = discover_external_attack_datasets(replay_roots)
     external_eval_cfg = ExternalHardSuiteConfig(
         roots=tuple(eval_roots),
@@ -289,8 +302,11 @@ def run_hybrid_purify_detox_yolo(
         "status": "running",
         "warnings": [],
     }
+    manifest["external_replay_failed_only"] = replay_failed_only
     if not teacher_model:
         manifest["warnings"].append("teacher_model not provided; feature distillation uses a frozen copy of the suspicious model, which is weaker.")
+    if not replay_failed_only:
+        manifest["warnings"].append("external replay roots differ from eval roots; replay uses all selected attack samples instead of failure-only path matching.")
     write_json(output_dir / "hybrid_purify_manifest.json", manifest)
 
     current_model = Path(model_path)
@@ -398,6 +414,7 @@ def run_hybrid_purify_detox_yolo(
             attack_specs=cfg.attack_specs,
             include_internal_asr=cfg.include_internal_asr,
             use_external_replay=cfg.use_external_replay,
+            external_replay_failed_only=replay_failed_only,
         )
         phases = _build_phase_plan(cfg.attack_specs, accepted_hard_scores, closed_cfg)
         cycle_info: Dict[str, Any] = {"cycle": cycle, "phases": [], "hard_scores_in": dict(accepted_hard_scores)}

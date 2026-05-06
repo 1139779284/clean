@@ -2,6 +2,8 @@ from pathlib import Path
 
 import yaml
 
+from model_security_gate.detox.hybrid_purify_train import _same_root_sets
+
 
 def test_hybrid_purify_config_has_required_sections():
     cfg_path = Path("configs/hybrid_purify_detox.yaml")
@@ -19,3 +21,12 @@ def test_hybrid_purify_config_has_required_sections():
         if a["goal"] == "oda":
             assert a.get("poison_positive") is True
             assert a.get("poison_negative") is False
+
+
+def test_hybrid_replay_failure_only_requires_same_roots(tmp_path: Path):
+    root_a = tmp_path / "a"
+    root_b = tmp_path / "b"
+    root_a.mkdir()
+    root_b.mkdir()
+    assert _same_root_sets([str(root_a)], [str(root_a.resolve())])
+    assert not _same_root_sets([str(root_a)], [str(root_b)])
