@@ -23,6 +23,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--conf", type=float, default=None)
     p.add_argument("--iou", type=float, default=None)
     p.add_argument("--match-iou", type=float, default=None)
+    p.add_argument(
+        "--oda-success-mode",
+        choices=["localized_any_recalled", "class_presence", "strict_all_recalled"],
+        default=None,
+        help=(
+            "ODA ASR definition: localized_any_recalled=current default, "
+            "class_presence=success only if no target-class detection exists, "
+            "strict_all_recalled=success if any GT target is missing."
+        ),
+    )
     p.add_argument("--max-images-per-attack", type=int, default=None)
     p.add_argument("--device", default=None)
     return p.parse_args()
@@ -40,6 +50,7 @@ def main() -> None:
         "conf": 0.25,
         "iou": 0.7,
         "match_iou": 0.30,
+        "oda_success_mode": "localized_any_recalled",
         "max_images_per_attack": 0,
         "device": None,
     }
@@ -56,6 +67,7 @@ def main() -> None:
         iou=float(resolved.get("iou", 0.7)),
         imgsz=int(resolved.get("imgsz", 640)),
         match_iou=float(resolved.get("match_iou", 0.30)),
+        oda_success_mode=str(resolved.get("oda_success_mode", "localized_any_recalled")),
         max_images_per_attack=int(resolved.get("max_images_per_attack", 0) or 0),
     )
     result = run_external_hard_suite_for_yolo(

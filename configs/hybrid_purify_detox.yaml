@@ -20,6 +20,11 @@ hybrid_purify_detox:
   max_map_drop: 0.03
   external_eval_max_images_per_attack: 0
   external_replay_max_images_per_attack: 250
+  # ODA ASR definition:
+  # - localized_any_recalled: default; at least one GT target recalled means no disappearance
+  # - class_presence: looser; any target-class prediction means no disappearance
+  # - strict_all_recalled: stricter; any missed GT target means disappearance
+  external_oda_success_mode: localized_any_recalled
   run_feature_purifier: true
   run_clean_recovery_finetune: true
   trusted_teacher_required: false

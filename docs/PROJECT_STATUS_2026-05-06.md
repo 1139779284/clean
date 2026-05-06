@@ -22,6 +22,14 @@ This smoke completed one Hybrid-PURIFY cycle without code/runtime failure. It di
 
 The major blocker is still detection-backdoor detox under external hard suites, especially ODA-style target disappearance and related semantic/WaNet failures. The current code is useful for diagnosis and iteration, but the generated candidate model must still pass final Security Gate + acceptance checks before any deployment use.
 
+The full Hybrid-PURIFY run launched after commit `9e812a7` was paused for evaluation-flow audit:
+
+```text
+D:\clean_yolo\model_security_gate\runs\hybrid_purify_full_best2_2026-05-06_9e812a7
+```
+
+The audit found an important ASR-definition ambiguity rather than a class-map inversion. The external hard-suite class mapping is consistent (`0=helmet`, `1=head`), but ODA ASR changes substantially depending on whether disappearance means "no correctly localized GT helmet is recalled" or simply "no helmet prediction exists anywhere." On a 30-image held-out sample, `badnet_oda` measured `0.90` with the localized-recall definition and `0.233` with the class-presence definition. External ASR reports now include row-level evidence fields (`success_reason`, `n_gt_target`, `n_target_dets`, `n_recalled_target`, `best_target_iou`, `oda_success_mode`) and the ODA success mode is configurable.
+
 ## What Is Fixed
 
 - The closed-loop trainer no longer accepts a candidate that was rolled back.
@@ -38,6 +46,7 @@ The major blocker is still detection-backdoor detox under external hard suites, 
 - The current ASR target is still unmet: `external_max_asr <= 0.10` and clean `mAP50-95` drop `<= 0.03`.
 - GitHub CI is CPU/static-test oriented; real YOLO/CUDA detox runs must be validated locally.
 - Full datasets, run directories, and large transient model artifacts are intentionally not committed.
+- ODA ASR must be reported with its explicit success mode. Do not compare old runs unless `oda_success_mode` is the same.
 
 ## Recommended Next Steps
 

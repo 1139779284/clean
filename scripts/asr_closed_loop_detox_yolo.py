@@ -25,6 +25,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--external-replay-roots", nargs="*", default=None, help="Hard-suite roots replayed into phase datasets. Defaults to external eval roots.")
     p.add_argument("--external-eval-max-images-per-attack", type=int, default=None)
     p.add_argument("--external-replay-max-images-per-attack", type=int, default=None)
+    p.add_argument(
+        "--external-oda-success-mode",
+        choices=["localized_any_recalled", "class_presence", "strict_all_recalled"],
+        default=None,
+        help="Held-out external ODA ASR definition used for selection.",
+    )
     p.add_argument("--imgsz", type=int, default=None)
     p.add_argument("--batch", type=int, default=None)
     p.add_argument("--device", default=None)

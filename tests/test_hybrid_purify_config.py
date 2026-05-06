@@ -18,6 +18,7 @@ def test_hybrid_purify_config_has_required_sections():
     data = yaml.safe_load(cfg_path.read_text())
     cfg = data["hybrid_purify_detox"]
     assert cfg["max_allowed_external_asr"] <= 0.10
+    assert cfg["external_oda_success_mode"] in {"localized_any_recalled", "class_presence", "strict_all_recalled"}
     attacks = cfg["attacks"]
     names = {a["name"] for a in attacks}
     assert {"badnet_oga", "blend_oga", "wanet_oga", "badnet_oda", "semantic_green_cleanlabel"}.issubset(names)

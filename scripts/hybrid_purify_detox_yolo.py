@@ -35,6 +35,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-map50-95", type=float, default=None)
     p.add_argument("--external-eval-max-images-per-attack", type=int, default=None)
     p.add_argument("--external-replay-max-images-per-attack", type=int, default=None)
+    p.add_argument(
+        "--external-oda-success-mode",
+        choices=["localized_any_recalled", "class_presence", "strict_all_recalled"],
+        default=None,
+        help="Held-out external ODA ASR definition used for selection.",
+    )
     p.add_argument("--max-images", type=int, default=None)
     p.add_argument("--eval-max-images", type=int, default=None)
     p.add_argument("--no-feature-purifier", action="store_true", default=None)

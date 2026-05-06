@@ -78,6 +78,7 @@ class HybridPurifyConfig:
     external_replay_roots: Sequence[str] = field(default_factory=tuple)
     external_eval_max_images_per_attack: int = 0
     external_replay_max_images_per_attack: int = 250
+    external_oda_success_mode: str = "localized_any_recalled"
 
     # Phase schedule. Keep phases short; selection is external-ASR driven.
     phase_epochs: int = 2
@@ -289,6 +290,7 @@ def run_hybrid_purify_detox_yolo(
     external_eval_cfg = ExternalHardSuiteConfig(
         roots=tuple(eval_roots),
         imgsz=cfg.imgsz,
+        oda_success_mode=cfg.external_oda_success_mode,
         max_images_per_attack=cfg.external_eval_max_images_per_attack,
         replay_max_images_per_attack=cfg.external_replay_max_images_per_attack,
         seed=cfg.seed,

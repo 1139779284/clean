@@ -49,6 +49,7 @@ class ExternalHardSuiteConfig:
     iou: float = 0.7
     imgsz: int = 640
     match_iou: float = 0.30
+    oda_success_mode: str = "localized_any_recalled"
     max_images_per_attack: int = 0
     replay_max_images_per_attack: int = 0
     seed: int = 42
@@ -152,21 +153,87 @@ def _positive_target_recalled(dets: Sequence[Detection], labels: Sequence[Mappin
     return False
 
 
-def _score_external_success(goal: str, dets: Sequence[Detection], labels: Sequence[Mapping[str, Any]], target_ids: Sequence[int], match_iou: float) -> bool | None:
+def _target_match_stats(
+    dets: Sequence[Detection],
+    labels: Sequence[Mapping[str, Any]],
+    target_ids: Sequence[int],
+    match_iou: float,
+) -> Dict[str, Any]:
+    labs = _target_labels(labels, target_ids)
+    target_dets = _target_dets(dets, target_ids)
+    recalled = 0
+    best_iou = 0.0
+    for lab in labs:
+        lab_best = 0.0
+        for det in target_dets:
+            if int(det.cls_id) != int(lab["cls_id"]):
+                continue
+            lab_best = max(lab_best, iou_xyxy(det.xyxy, lab["xyxy"]))
+        best_iou = max(best_iou, lab_best)
+        if lab_best >= float(match_iou):
+            recalled += 1
+    return {
+        "has_gt_target": bool(labs),
+        "n_gt_target": int(len(labs)),
+        "n_target_dets": int(len(target_dets)),
+        "n_recalled_target": int(recalled),
+        "target_recall_rate": float(recalled / len(labs)) if labs else None,
+        "best_target_iou": float(best_iou),
+        "max_target_conf": max([float(d.conf) for d in target_dets], default=0.0),
+    }
+
+
+def _score_external_result(
+    goal: str,
+    dets: Sequence[Detection],
+    labels: Sequence[Mapping[str, Any]],
+    target_ids: Sequence[int],
+    match_iou: float,
+    oda_success_mode: str = "localized_any_recalled",
+) -> Dict[str, Any] | None:
     goal = infer_attack_goal(goal, default=goal).lower()
-    has_gt = _has_target(labels, target_ids)
+    oda_mode = str(oda_success_mode or "localized_any_recalled").lower()
+    stats = _target_match_stats(dets, labels, target_ids, match_iou)
+    has_gt = bool(stats["has_gt_target"])
     if goal == "oga":
         if has_gt:
             return None
-        return bool(_target_dets(dets, target_ids))
-    if goal == "oda":
+        success = bool(stats["n_target_dets"])
+        reason = "target_false_positive_on_negative" if success else "no_target_false_positive"
+    elif goal == "oda":
         if not has_gt:
             return None
-        return not _positive_target_recalled(dets, labels, target_ids, match_iou)
-    # Semantic/all: either false positive on negatives or target disappearance on positives.
-    if has_gt:
-        return not _positive_target_recalled(dets, labels, target_ids, match_iou)
-    return bool(_target_dets(dets, target_ids))
+        if oda_mode in {"class_presence", "no_target_detection", "class"}:
+            success = int(stats["n_target_dets"]) == 0
+            reason = "no_target_detection" if success else "target_class_still_detected"
+        elif oda_mode in {"strict_all_recalled", "any_gt_missing", "all_targets_recalled"}:
+            success = int(stats["n_recalled_target"]) < int(stats["n_gt_target"])
+            reason = "at_least_one_gt_target_missing" if success else "all_gt_targets_recalled"
+        else:
+            success = int(stats["n_recalled_target"]) == 0
+            reason = "no_gt_target_recalled" if success else "at_least_one_gt_target_recalled"
+    else:
+        # Semantic/all: either false positive on negatives or target disappearance on positives.
+        if has_gt:
+            if oda_mode in {"class_presence", "no_target_detection", "class"}:
+                success = int(stats["n_target_dets"]) == 0
+                reason = "semantic_no_target_detection" if success else "semantic_target_class_still_detected"
+            elif oda_mode in {"strict_all_recalled", "any_gt_missing", "all_targets_recalled"}:
+                success = int(stats["n_recalled_target"]) < int(stats["n_gt_target"])
+                reason = "semantic_at_least_one_gt_target_missing" if success else "semantic_all_gt_targets_recalled"
+            else:
+                success = int(stats["n_recalled_target"]) == 0
+                reason = "semantic_no_gt_target_recalled" if success else "semantic_gt_target_recalled"
+        else:
+            success = bool(stats["n_target_dets"])
+            reason = "semantic_target_false_positive_on_negative" if success else "semantic_no_target_false_positive"
+    stats.update({"success": bool(success), "success_reason": reason, "oda_success_mode": oda_mode})
+    return stats
+
+
+def _score_external_success(goal: str, dets: Sequence[Detection], labels: Sequence[Mapping[str, Any]], target_ids: Sequence[int], match_iou: float) -> bool | None:
+    result = _score_external_result(goal, dets, labels, target_ids, match_iou)
+    return None if result is None else bool(result["success"])
 
 
 def _iter_attack_paths(ds: ExternalAttackDataset, max_images: int = 0) -> List[Path]:
@@ -193,10 +260,9 @@ def run_external_hard_suite(
             img = read_image_bgr(path)
             labels = read_yolo_labels(path, img.shape, labels_dir=ds.labels_dir)
             dets = adapter.predict_image(path, conf=cfg.conf, iou=cfg.iou, imgsz=cfg.imgsz)
-            success = _score_external_success(goal, dets, labels, target_ids, cfg.match_iou)
-            if success is None:
+            score = _score_external_result(goal, dets, labels, target_ids, cfg.match_iou, cfg.oda_success_mode)
+            if score is None:
                 continue
-            target_dets = _target_dets(dets, target_ids)
             rows.append(
                 {
                     "suite": ds.suite or "external",
@@ -204,10 +270,7 @@ def run_external_hard_suite(
                     "goal": goal,
                     "image": str(path),
                     "image_basename": Path(path).name,
-                    "success": bool(success),
-                    "has_gt_target": _has_target(labels, target_ids),
-                    "n_target_dets": len(target_dets),
-                    "max_target_conf": max([float(d.conf) for d in target_dets], default=0.0),
+                    **score,
                 }
             )
     return summarize_external_rows(rows, config=asdict(cfg))

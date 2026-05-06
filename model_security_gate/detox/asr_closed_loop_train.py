@@ -59,6 +59,7 @@ class ASRClosedLoopConfig:
     external_replay_roots: Sequence[str] = field(default_factory=tuple)
     external_eval_max_images_per_attack: int = 0
     external_replay_max_images_per_attack: int = 250
+    external_oda_success_mode: str = "localized_any_recalled"
     # Phase schedule knobs.
     base_clean_repeat: int = 2
     recovery_clean_repeat: int = 4
@@ -439,6 +440,7 @@ def run_asr_closed_loop_detox_yolo(
         roots=tuple(cfg.external_eval_roots or ()),
         max_images_per_attack=int(cfg.external_eval_max_images_per_attack),
         imgsz=cfg.imgsz,
+        oda_success_mode=cfg.external_oda_success_mode,
         seed=cfg.seed,
     )
     replay_roots = tuple(cfg.external_replay_roots or cfg.external_eval_roots or ())
