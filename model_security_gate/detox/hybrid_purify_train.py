@@ -331,8 +331,42 @@ def run_hybrid_purify_detox_yolo(
 
     best_item: Dict[str, Any] | None = None
     hard_scores = _combined_scores(before_eval)
+    external_rows: Sequence[Mapping[str, Any]] | None = (before_eval.get("external") or {}).get("rows")
+    baseline_external_asr = _max_asr(before_eval.get("external"))
+    baseline_internal_asr = _max_asr(before_eval.get("internal"))
+    baseline_external_mean = _mean_asr(before_eval.get("external"))
+    baseline_internal_mean = _mean_asr(before_eval.get("internal"))
+    best_item = {
+        "cycle": 0,
+        "model": str(current_model),
+        "external_max_asr": baseline_external_asr,
+        "external_mean_asr": baseline_external_mean,
+        "internal_max_asr": baseline_internal_asr,
+        "internal_mean_asr": baseline_internal_mean,
+        "clean_metrics": clean_before,
+        "map_drop": 0.0,
+        "selection_score": _selection_score(baseline_external_asr, baseline_internal_asr, 0.0, baseline_cfg, external_mean_asr=baseline_external_mean),
+        "external_json": before_eval.get("external_json"),
+        "internal_json": before_eval.get("internal_json"),
+        "passes": _passes(
+            {
+                "external_max_asr": baseline_external_asr,
+                "internal_max_asr": baseline_internal_asr,
+                "map_drop": 0.0,
+                "clean_metrics": clean_before,
+            },
+            cfg,
+        ),
+        "cycle_info": {"phase": "baseline"},
+    }
+    manifest["best"] = best_item
+    accepted_model = Path(best_item["model"])
+    accepted_hard_scores = dict(hard_scores)
+    accepted_external_rows = external_rows
+    write_json(output_dir / "hybrid_purify_manifest.json", manifest)
 
     for cycle in range(1, int(cfg.cycles) + 1):
+        current_model = accepted_model
         closed_cfg = ASRClosedLoopConfig(
             imgsz=cfg.imgsz,
             batch=cfg.batch,
@@ -365,8 +399,8 @@ def run_hybrid_purify_detox_yolo(
             include_internal_asr=cfg.include_internal_asr,
             use_external_replay=cfg.use_external_replay,
         )
-        phases = _build_phase_plan(cfg.attack_specs, hard_scores, closed_cfg)
-        cycle_info: Dict[str, Any] = {"cycle": cycle, "phases": [], "hard_scores_in": dict(hard_scores)}
+        phases = _build_phase_plan(cfg.attack_specs, accepted_hard_scores, closed_cfg)
+        cycle_info: Dict[str, Any] = {"cycle": cycle, "phases": [], "hard_scores_in": dict(accepted_hard_scores)}
 
         for pi, phase in enumerate(phases, 1):
             phase_yaml = _build_phase_dataset(
@@ -379,6 +413,7 @@ def run_hybrid_purify_detox_yolo(
                 target_ids=target_ids,
                 cfg=closed_cfg,
                 replay_datasets=replay_datasets,
+                failure_rows=accepted_external_rows,
             )
             phase_dir = output_dir / f"02_cycle_{cycle:02d}_phase_{pi:02d}_{phase.name}"
             if cfg.run_feature_purifier:
@@ -418,7 +453,7 @@ def run_hybrid_purify_detox_yolo(
         mean_external = _mean_asr(evals.get("external"))
         mean_internal = _mean_asr(evals.get("internal"))
         map_drop = _map_drop(clean_before, evals.get("clean_metrics"))
-        score = _selection_score(external_asr, internal_asr, map_drop, closed_cfg)
+        score = _selection_score(external_asr, internal_asr, map_drop, closed_cfg, external_mean_asr=mean_external)
         item = {
             "cycle": cycle,
             "model": str(current_model),
@@ -435,10 +470,19 @@ def run_hybrid_purify_detox_yolo(
             "cycle_info": cycle_info,
         }
         manifest["cycles"].append(item)
-        if best_item is None or item["selection_score"] < best_item["selection_score"]:
+        improved = item["selection_score"] < float(best_item["selection_score"]) - float(closed_cfg.min_selection_improvement)
+        if improved:
             best_item = item
             manifest["best"] = item
-        hard_scores = _combined_scores(evals)
+            accepted_model = Path(item["model"])
+            accepted_hard_scores = _combined_scores(evals)
+            accepted_external_rows = (evals.get("external") or {}).get("rows") or accepted_external_rows
+            item["rolled_back"] = False
+        else:
+            item["rolled_back"] = True
+            item["rollback_to"] = str(accepted_model)
+            item["rollback_reason"] = "no_selection_improvement"
+            current_model = accepted_model
         write_json(output_dir / "hybrid_purify_manifest.json", manifest)
         if item["passes"] and cfg.stop_on_pass:
             manifest["status"] = "passed_early"
