@@ -36,6 +36,15 @@ def _same_root_sets(left: Sequence[str], right: Sequence[str]) -> bool:
     return left_set == right_set
 
 
+def _torch_device_arg(device: str | int | None) -> str | None:
+    if device is None:
+        return None
+    text = str(device)
+    if text.isdigit():
+        return f"cuda:{text}"
+    return text
+
+
 @dataclass
 class HybridPurifyConfig:
     """External-suite driven feature-level detox for YOLO detectors.
@@ -190,7 +199,7 @@ def _run_feature_purifier_phase(
         lr=float(cfg.recovery_lr if "clean" in phase_name.lower() or "recovery" in phase_name.lower() else cfg.lr),
         weight_decay=float(cfg.weight_decay),
         num_workers=int(cfg.num_workers),
-        device=str(cfg.device) if cfg.device is not None else None,
+        device=_torch_device_arg(cfg.device),
         max_train_images=cfg.max_images if cfg.max_images and cfg.max_images > 0 else None,
         max_val_images=cfg.max_images if cfg.max_images and cfg.max_images > 0 else None,
         amp=bool(cfg.amp),

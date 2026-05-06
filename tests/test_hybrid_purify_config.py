@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from model_security_gate.detox.hybrid_purify_train import _same_root_sets
+from model_security_gate.detox.hybrid_purify_train import _same_root_sets, _torch_device_arg
 
 
 def test_hybrid_purify_config_has_required_sections():
@@ -30,3 +30,9 @@ def test_hybrid_replay_failure_only_requires_same_roots(tmp_path: Path):
     root_b.mkdir()
     assert _same_root_sets([str(root_a)], [str(root_a.resolve())])
     assert not _same_root_sets([str(root_a)], [str(root_b)])
+
+
+def test_hybrid_feature_purifier_normalizes_numeric_cuda_device():
+    assert _torch_device_arg(0) == "cuda:0"
+    assert _torch_device_arg("0") == "cuda:0"
+    assert _torch_device_arg("cuda:1") == "cuda:1"
