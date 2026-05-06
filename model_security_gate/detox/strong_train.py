@@ -5,7 +5,6 @@ import csv
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Sequence
 
 import torch
@@ -96,8 +95,6 @@ def load_ultralytics_yolo(weights: str | Path, device: torch.device):
     yolo = YOLO(str(weights))
     if hasattr(yolo, "model"):
         yolo.model.to(device)
-        _reset_ultralytics_criterion(yolo.model)
-        _normalize_ultralytics_loss_args(yolo.model)
     return yolo
 
 
@@ -109,76 +106,11 @@ def save_ultralytics_yolo(yolo, path: str | Path) -> Path:
 
 
 def _torch_model(yolo_or_model) -> torch.nn.Module:
-    if hasattr(yolo_or_model, "model") and isinstance(yolo_or_model.model, torch.nn.Module):
-        return yolo_or_model.model
     if isinstance(yolo_or_model, torch.nn.Module):
         return yolo_or_model
+    if hasattr(yolo_or_model, "model") and isinstance(yolo_or_model.model, torch.nn.Module):
+        return yolo_or_model.model
     raise TypeError("Expected Ultralytics YOLO wrapper or torch model")
-
-
-def _namespace_from_mapping(mapping: Dict[str, Any]) -> Any:
-    try:
-        from ultralytics.utils import IterableSimpleNamespace
-
-        return IterableSimpleNamespace(**mapping)
-    except Exception:
-        return SimpleNamespace(**mapping)
-
-
-def _default_ultralytics_args() -> Dict[str, Any]:
-    try:
-        from ultralytics.cfg import DEFAULT_CFG
-
-        if isinstance(DEFAULT_CFG, dict):
-            return dict(DEFAULT_CFG)
-        return dict(vars(DEFAULT_CFG))
-    except Exception:
-        return {
-            "box": 7.5,
-            "cls": 0.5,
-            "dfl": 1.5,
-            "pose": 12.0,
-            "kobj": 1.0,
-            "nbs": 64,
-        }
-
-
-def _normalize_ultralytics_loss_args(model: torch.nn.Module) -> None:
-    """Ensure Ultralytics DetectionModel loss hyperparameters are attr-style.
-
-    Some exported/custom checkpoints carry only a small ``model.args`` dict
-    (for example task/data/imgsz/model). Ultralytics' detection loss expects
-    ``hyp.box``, ``hyp.cls`` and ``hyp.dfl`` attribute access, so direct manual
-    training can crash unless we merge those checkpoint args with DEFAULT_CFG.
-    """
-    args = getattr(model, "args", None)
-    if isinstance(args, dict) or args is None:
-        merged = _default_ultralytics_args()
-        if isinstance(args, dict):
-            merged.update(args)
-        model.args = _namespace_from_mapping(merged)
-    criterion = getattr(model, "criterion", None)
-    hyp = getattr(criterion, "hyp", None) if criterion is not None else None
-    if isinstance(hyp, dict):
-        merged = _default_ultralytics_args()
-        merged.update(hyp)
-        criterion.hyp = _namespace_from_mapping(merged)
-
-
-def _reset_ultralytics_criterion(model: torch.nn.Module) -> None:
-    """Drop serialized Ultralytics criterion state before manual training.
-
-    The criterion is not a torch Module and can contain tensors such as
-    ``proj`` on the device used when the checkpoint was saved. Resetting it
-    lets Ultralytics recreate the loss on the current model/device.
-    """
-    if hasattr(model, "criterion"):
-        model.criterion = None
-
-
-def _unfreeze_trainable_model(model: torch.nn.Module) -> None:
-    for param in model.parameters():
-        param.requires_grad_(True)
 
 
 def _make_teacher(cfg: StrongDetoxConfig, student_yolo, device: torch.device):
@@ -242,7 +174,6 @@ def run_strong_detox_training(cfg: StrongDetoxConfig) -> Dict[str, Any]:
 
     student_yolo = load_ultralytics_yolo(cfg.model, device)
     student = _torch_model(student_yolo).to(device)
-    _unfreeze_trainable_model(student)
     teacher_yolo, teacher = _make_teacher(cfg, student_yolo, device)
     teacher = teacher.to(device).eval()
     for p in teacher.parameters():

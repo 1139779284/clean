@@ -25,19 +25,19 @@ asr_aware_detox:
       kind: badnet_patch
       goal: oga
       poison_negative: true
-      poison_positive: false
+      poison_positive: true
       params: {patch_frac: 0.09, position: br}
     - name: blend_oga
       kind: blend
       goal: oga
       poison_negative: true
-      poison_positive: false
+      poison_positive: true
       params: {alpha: 0.18, freq: 8}
     - name: wanet_oga
       kind: wanet
       goal: oga
       poison_negative: true
-      poison_positive: false
+      poison_positive: true
       params: {amplitude: 0.05, grid: 5}
     - name: badnet_oda
       kind: badnet_patch

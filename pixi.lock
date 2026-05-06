@@ -94,7 +94,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/68/2f/f24b039169db474e8688f649377de082a965fbf85daf4e46c44412f1d15a/torchvision-0.25.0-cp312-cp312-manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ab/a8/cdf8b3e4c98132f965f88c2313a4b493266832ad47fb52f23d14d4f86bb5/triton-3.6.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
-      - pypi: https://files.pythonhosted.org/packages/a6/1a/5bfdb77dc86bb06fa7cd19d2e05a91cb787fa6d5a3093284f9bbd819dbcf/ultralytics-8.4.46-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/67/9b/c1191b98a09caf6699cb24c222052426ce247dc9432ca67bc1db251ed26e/ultralytics-8.4.47-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/6a/74/af3e40919305f16968ea3ab88d84b511d710dd281eb5dafaf4897579dd22/ultralytics_thop-2.0.19-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/39/08/aaaad47bc4e9dc8c725e68f9d04865dbcb2052843ff09c97b08904852d84/urllib3-2.6.3-py3-none-any.whl
       - pypi: ./
@@ -156,7 +156,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/79/78/29dcab24a344ffd9ee9549ec0ab2c7885c13df61cde4c65836ee275efaeb/torch-2.2.2-cp312-none-macosx_10_9_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/ff/b6/a056fb68cae15e8aec4f854f78d4787086d77efa5468a29d5b744eee2a2b/torchvision-0.17.2-cp312-cp312-macosx_10_13_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/a6/1a/5bfdb77dc86bb06fa7cd19d2e05a91cb787fa6d5a3093284f9bbd819dbcf/ultralytics-8.4.46-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/67/9b/c1191b98a09caf6699cb24c222052426ce247dc9432ca67bc1db251ed26e/ultralytics-8.4.47-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/6a/74/af3e40919305f16968ea3ab88d84b511d710dd281eb5dafaf4897579dd22/ultralytics_thop-2.0.19-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/39/08/aaaad47bc4e9dc8c725e68f9d04865dbcb2052843ff09c97b08904852d84/urllib3-2.6.3-py3-none-any.whl
       - pypi: ./
@@ -217,7 +217,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/d3/54/a2ba279afcca44bbd320d4e73675b282fcee3d81400ea1b53934efca6462/torch-2.10.0-2-cp312-none-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/56/3a/6ea0d73f49a9bef38a1b3a92e8dd455cea58470985d25635beab93841748/torchvision-0.25.0-cp312-cp312-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/a6/1a/5bfdb77dc86bb06fa7cd19d2e05a91cb787fa6d5a3093284f9bbd819dbcf/ultralytics-8.4.46-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/67/9b/c1191b98a09caf6699cb24c222052426ce247dc9432ca67bc1db251ed26e/ultralytics-8.4.47-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/6a/74/af3e40919305f16968ea3ab88d84b511d710dd281eb5dafaf4897579dd22/ultralytics_thop-2.0.19-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/39/08/aaaad47bc4e9dc8c725e68f9d04865dbcb2052843ff09c97b08904852d84/urllib3-2.6.3-py3-none-any.whl
       - pypi: ./
@@ -339,7 +339,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/ce/e4/dccd7f47c4b64213ac01ef921a1337ee6e30e8c6466046018326977efd95/tzdata-2026.2-py2.py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/a6/1a/5bfdb77dc86bb06fa7cd19d2e05a91cb787fa6d5a3093284f9bbd819dbcf/ultralytics-8.4.46-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/67/9b/c1191b98a09caf6699cb24c222052426ce247dc9432ca67bc1db251ed26e/ultralytics-8.4.47-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/6a/74/af3e40919305f16968ea3ab88d84b511d710dd281eb5dafaf4897579dd22/ultralytics_thop-2.0.19-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/39/08/aaaad47bc4e9dc8c725e68f9d04865dbcb2052843ff09c97b08904852d84/urllib3-2.6.3-py3-none-any.whl
       - pypi: ./
@@ -1990,7 +1990,7 @@ packages:
 - pypi: ./
   name: model-security-gate
   version: 0.1.0
-  sha256: debeee37ac5e76ca4a963a8e0830efcfa2cc542b9e2f88af713de38606b112d3
+  sha256: a98386f7f2dcb509a8b1b0aa5dd6a01f490d3c904a7b41661f8151d58f0c3493
   requires_dist:
   - ultralytics>=8.2.0
   - opencv-python>=4.8.0
@@ -3963,10 +3963,10 @@ packages:
   purls: []
   size: 694692
   timestamp: 1756385147981
-- pypi: https://files.pythonhosted.org/packages/a6/1a/5bfdb77dc86bb06fa7cd19d2e05a91cb787fa6d5a3093284f9bbd819dbcf/ultralytics-8.4.46-py3-none-any.whl
+- pypi: https://files.pythonhosted.org/packages/67/9b/c1191b98a09caf6699cb24c222052426ce247dc9432ca67bc1db251ed26e/ultralytics-8.4.47-py3-none-any.whl
   name: ultralytics
-  version: 8.4.46
-  sha256: 87982e71fad96424ef0356eb2d1a7a32526051c404089e979634322dc3ba4156
+  version: 8.4.47
+  sha256: 0e2e0c0c85a90177db02816ae777649adbae234ae50cc40c057dd18b21211257
   requires_dist:
   - numpy>=1.23.0
   - matplotlib>=3.3.0

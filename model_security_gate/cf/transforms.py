@@ -138,13 +138,7 @@ def assess_inpaint_quality(
     max_mask_fraction: float = 0.35,
     max_changed_fraction: float = 0.60,
 ) -> Dict[str, Any]:
-    """Heuristic quality gate for target-inpaint counterfactuals.
-
-    Inpainted samples are useful only when the removed target is local. If the
-    target mask covers most of the image, the generated hard negative becomes a
-    large synthetic artifact and can poison detox training. This lightweight
-    check intentionally errs on the conservative side.
-    """
+    """Heuristic quality gate for target-inpaint counterfactuals."""
     h, w = original_bgr.shape[:2]
     reasons: List[str] = []
     if h <= 0 or w <= 0:

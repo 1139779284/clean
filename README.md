@@ -6,7 +6,7 @@
 
 ## 当前状态与待完善算法
 
-请先看 [`docs/ALGORITHM_COVERAGE_AND_ROADMAP.md`](docs/ALGORITHM_COVERAGE_AND_ROADMAP.md)。这里列出了当前已经接入的扫描/净化/验收模块，也明确标出仍缺失或只是近似实现的算法，包括 Neural Cleanse、Activation Clustering、Spectral Signatures、STRIP、ABS、RNP 和完整 FMP 接入。
+请先看 [`docs/ALGORITHM_COVERAGE_AND_ROADMAP.md`](docs/ALGORITHM_COVERAGE_AND_ROADMAP.md)。这里列出了当前已经接入的扫描/净化/验收模块，也明确标出仍缺失或只是近似实现的算法，包括 Neural Cleanse、Activation Clustering、Spectral Signatures、STRIP、ABS、RNP-lite 与完整 FMP 接入。
 
 ## 安装
 
@@ -388,28 +388,10 @@ python scripts/asr_closed_loop_detox_yolo.py \
 
 This mode separates OGA / ODA / semantic / WaNet hardening phases, replays external hard-suite samples with correct labels, runs external ASR after every cycle, and selects checkpoints using external ASR plus clean mAP. See `ASR_CLOSED_LOOP_DETOX.md`.
 
-## Hybrid-PURIFY-OD feature-level detox
+## Hybrid-PURIFY-OD 最强通用净化
 
-当 external closed-loop 仍卡在高 ASR、尤其是 `badnet_oda` / `semantic` / `wanet` 与 clean mAP 难以同时满足时，使用 Hybrid-PURIFY-OD。它在 external hard-suite replay/selection 之外加入 feature-level 净化：
+当 ASR-aware hard-sample fine-tune 出现“ASR 压低但 mAP 崩”或“mAP 保住但外部 ASR 高”时，使用 `scripts/hybrid_purify_detox_yolo.py`。该流程将 external hard-suite replay/selection、PGBD-style prototype sanitization、I-BAU-style adversarial unlearning、NAD/feature/output distillation 和分阶段 OGA/ODA/semantic/WaNet 训练合成一个闭环。详见 `HYBRID_PURIFY_DETOX.md`。
 
-```bash
-python scripts/hybrid_purify_detox_yolo.py \
-  --model "best 2.pt" \
-  --teacher-model path/to/clean_teacher.pt \
-  --images dataset/images/train \
-  --labels dataset/labels/train \
-  --data-yaml dataset/data.yaml \
-  --target-classes helmet \
-  --external-replay-roots poison_benchmark_cuda_large \
-  --external-eval-roots poison_benchmark_cuda_tuned \
-  --out runs/hybrid_purify_best2 \
-  --cycles 4 \
-  --phase-epochs 2 \
-  --feature-epochs 2 \
-  --recovery-epochs 2 \
-  --max-allowed-external-asr 0.10 \
-  --max-map-drop 0.03 \
-  --device 0
-```
+## Hybrid-PURIFY-OD v2
 
-该模式组合 PGBD-style prototype suppression、target-present prototype alignment、I-BAU-style adversarial unlearning、NAD/feature/output distillation 和 clean recovery。没有可信 teacher 时会 fallback 到 frozen suspicious model，只能算风险降低，不能当生产安全证明。更多见 `HYBRID_PURIFY_DETOX.md` 和 `docs/PROJECT_STATUS_2026-05-06.md`。
+The strongest experimental detox path is documented in `HYBRID_PURIFY_DETOX.md`. It adds external-hard-suite-first checkpoint selection, per-attack non-regression gates, conservative RNP-lite soft-pruning candidates, and phase-separated feature-level purification. It is still experimental and must pass external ASR + clean mAP gates before deployment.

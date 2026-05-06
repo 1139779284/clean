@@ -21,14 +21,26 @@ hybrid_purify_detox:
   external_eval_max_images_per_attack: 0
   external_replay_max_images_per_attack: 250
   # ODA ASR definition:
-  # - localized_any_recalled: default; at least one GT target recalled means no disappearance
-  # - class_presence: looser; any target-class prediction means no disappearance
-  # - strict_all_recalled: stricter; any missed GT target means disappearance
+  # - localized_any_recalled: success if no GT target is spatially recalled
+  # - class_presence: success only if no target-class detection exists
+  # - strict_all_recalled: success if any GT target is missing
   external_oda_success_mode: localized_any_recalled
   run_feature_purifier: true
   run_clean_recovery_finetune: true
   trusted_teacher_required: false
   amp: false
+  # RNP-lite soft suppression is evaluated as a candidate and rolled back if it
+  # worsens external ASR or clean mAP. Disable with --no-pre-prune.
+  run_pre_prune: true
+  pre_prune_top_k: 32
+  pre_prune_strength: 0.72
+  rnp_unlearn_steps: 40
+  rnp_max_images: 96
+  rnp_min_score_to_prune: 0.03
+  # Do not accept a candidate that makes a single external attack worse.
+  require_no_attack_worse: true
+  max_single_attack_asr_worsen: 0.02
+  external_mean_asr_weight: 0.35
   attacks:
     - name: badnet_oga
       kind: badnet_patch

@@ -37,6 +37,9 @@ __all__ = [
     "run_asr_closed_loop_detox_yolo",
     "HybridPurifyConfig",
     "run_hybrid_purify_detox_yolo",
+    "RNPConfig",
+    "score_rnp_channels_for_yolo",
+    "apply_rnp_soft_suppression",
 ]
 
 
@@ -127,8 +130,13 @@ def __getattr__(name: str):
         from .asr_closed_loop_train import ASRClosedLoopConfig, run_asr_closed_loop_detox_yolo
 
         return {"ASRClosedLoopConfig": ASRClosedLoopConfig, "run_asr_closed_loop_detox_yolo": run_asr_closed_loop_detox_yolo}[name]
+
     if name in {"HybridPurifyConfig", "run_hybrid_purify_detox_yolo"}:
         from .hybrid_purify_train import HybridPurifyConfig, run_hybrid_purify_detox_yolo
 
         return {"HybridPurifyConfig": HybridPurifyConfig, "run_hybrid_purify_detox_yolo": run_hybrid_purify_detox_yolo}[name]
+    if name in {"RNPConfig", "score_rnp_channels_for_yolo", "apply_rnp_soft_suppression"}:
+        from .rnp import RNPConfig, apply_rnp_soft_suppression, score_rnp_channels_for_yolo
+
+        return {"RNPConfig": RNPConfig, "score_rnp_channels_for_yolo": score_rnp_channels_for_yolo, "apply_rnp_soft_suppression": apply_rnp_soft_suppression}[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

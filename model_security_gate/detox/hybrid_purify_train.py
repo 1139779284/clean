@@ -21,28 +21,8 @@ from model_security_gate.detox.strong_train import StrongDetoxConfig as FeatureS
 from model_security_gate.detox.strong_train import run_strong_detox_training
 from model_security_gate.detox.train_ultralytics import train_counterfactual_finetune
 from model_security_gate.detox.common import find_ultralytics_weight
+from model_security_gate.detox.rnp import RNPConfig, apply_rnp_soft_suppression, score_rnp_channels_for_yolo
 from model_security_gate.utils.io import resolve_class_ids, write_json
-
-
-def _same_root_sets(left: Sequence[str], right: Sequence[str]) -> bool:
-    if not left or not right or len(left) != len(right):
-        return False
-    try:
-        left_set = {str(Path(p).resolve()).lower() for p in left}
-        right_set = {str(Path(p).resolve()).lower() for p in right}
-    except OSError:
-        left_set = {str(Path(p)).lower() for p in left}
-        right_set = {str(Path(p)).lower() for p in right}
-    return left_set == right_set
-
-
-def _torch_device_arg(device: str | int | None) -> str | None:
-    if device is None:
-        return None
-    text = str(device)
-    if text.isdigit():
-        return f"cuda:{text}"
-    return text
 
 
 @dataclass
@@ -108,13 +88,84 @@ class HybridPurifyConfig:
     run_clean_recovery_finetune: bool = True
     trusted_teacher_required: bool = False
 
-    # Optional conservative soft-pruning. Off by default because clean mAP is
-    # already fragile in the user's experiments.
-    run_pre_prune: bool = False
-    pre_prune_top_k: int = 0
+    # Conservative RNP-lite soft-pruning. This is not a hard requirement for
+    # acceptance; it is evaluated as a candidate and rolled back if external ASR
+    # or clean mAP worsens. Defaults are intentionally soft.
+    run_pre_prune: bool = True
+    pre_prune_top_k: int = 32
+    pre_prune_strength: float = 0.72
+    rnp_unlearn_steps: int = 40
+    rnp_max_images: int = 96
+    rnp_min_score_to_prune: float = 0.03
+
+    # Pareto safety constraints. A candidate that improves mean score but makes
+    # one critical attack worse is rejected unless explicitly disabled.
+    require_no_attack_worse: bool = True
+    max_single_attack_asr_worsen: float = 0.02
+    external_mean_asr_weight: float = 0.35
+    worse_attack_penalty: float = 2.5
+    oda_worse_penalty: float = 3.0
+    min_selection_improvement: float = 0.005
 
     attack_specs: Sequence[AttackTransformConfig] = field(default_factory=lambda: default_attack_suite())
 
+
+
+def _asr_matrix(result: Mapping[str, Any] | None) -> Dict[str, float]:
+    try:
+        matrix = ((result or {}).get("summary") or {}).get("asr_matrix") or {}
+        return {str(k): float(v) for k, v in dict(matrix).items()}
+    except Exception:
+        return {}
+
+
+def compare_asr_matrices(
+    baseline: Mapping[str, float] | None,
+    candidate: Mapping[str, float] | None,
+    max_worsen: float = 0.02,
+) -> Dict[str, Any]:
+    """Compare per-attack ASR and flag regressions.
+
+    This is the guard that prevents the exact failure the user observed where a
+    balanced run improved clean mAP but made badnet_oda worse. The comparison is
+    key-wise and tolerant of missing keys; missing candidate keys are ignored,
+    because some external suites may be absent in small runs.
+    """
+    base = {str(k): float(v) for k, v in dict(baseline or {}).items()}
+    cand = {str(k): float(v) for k, v in dict(candidate or {}).items()}
+    rows: List[Dict[str, Any]] = []
+    worse: List[Dict[str, Any]] = []
+    for key, after in sorted(cand.items()):
+        before = base.get(key)
+        if before is None:
+            continue
+        delta = float(after) - float(before)
+        row = {"attack": key, "before": float(before), "after": float(after), "delta": delta, "worse": delta > float(max_worsen)}
+        rows.append(row)
+        if row["worse"]:
+            worse.append(row)
+    return {"rows": rows, "worse": worse, "n_worse": len(worse), "max_worsen": float(max_worsen)}
+
+
+def _hybrid_selection_score(
+    external_asr: float,
+    internal_asr: float,
+    external_mean_asr: float,
+    map_drop: float | None,
+    worse_compare: Mapping[str, Any] | None,
+    cfg: HybridPurifyConfig,
+) -> float:
+    # External max ASR dominates, external mean ASR prevents hiding broad failure
+    # behind one improved attack, and per-attack worsening is heavily penalized.
+    score = 1.35 * float(external_asr) + 0.30 * float(internal_asr) + float(cfg.external_mean_asr_weight) * float(external_mean_asr)
+    if map_drop is not None and float(map_drop) > float(cfg.max_map_drop):
+        score += 10.0 * (float(map_drop) - float(cfg.max_map_drop))
+    worse_rows = list((worse_compare or {}).get("worse") or [])
+    if worse_rows:
+        score += float(cfg.worse_attack_penalty) * len(worse_rows)
+        if any("oda" in str(r.get("attack", "")).lower() for r in worse_rows):
+            score += float(cfg.oda_worse_penalty)
+    return float(score)
 
 def _phase_feature_weights(phase_name: str) -> Dict[str, float]:
     low = phase_name.lower()
@@ -200,7 +251,7 @@ def _run_feature_purifier_phase(
         lr=float(cfg.recovery_lr if "clean" in phase_name.lower() or "recovery" in phase_name.lower() else cfg.lr),
         weight_decay=float(cfg.weight_decay),
         num_workers=int(cfg.num_workers),
-        device=_torch_device_arg(cfg.device),
+        device=str(cfg.device) if cfg.device is not None else None,
         max_train_images=cfg.max_images if cfg.max_images and cfg.max_images > 0 else None,
         max_val_images=cfg.max_images if cfg.max_images and cfg.max_images > 0 else None,
         amp=bool(cfg.amp),
@@ -256,6 +307,8 @@ def _passes(best: Mapping[str, Any], cfg: HybridPurifyConfig) -> bool:
         metrics = best.get("clean_metrics") or {}
         if "map50_95" in metrics and float(metrics.get("map50_95") or 0.0) < float(cfg.min_map50_95):
             return False
+    if bool(cfg.require_no_attack_worse) and int((best.get("asr_compare_to_baseline") or {}).get("n_worse", 0) or 0) > 0:
+        return False
     return True
 
 
@@ -269,11 +322,13 @@ def run_hybrid_purify_detox_yolo(
     teacher_model: str | Path | None = None,
     cfg: HybridPurifyConfig | None = None,
 ) -> Dict[str, Any]:
-    """Run the strongest generic detox pipeline currently implemented.
+    """Run Hybrid-PURIFY-OD v2.
 
-    The selection metric is external-hard-suite first. Internal synthetic ASR is
-    retained only as a secondary regularizer because the user's experiments show
-    internal ASR can be self-consistent while external hard suites fail.
+    This version is deliberately conservative: every candidate is evaluated on
+    the external hard suite, compared per-attack against the original baseline,
+    and rolled back if it worsens any critical attack or harms clean mAP. The
+    pipeline can therefore safely try stronger RNP/feature-level detox steps
+    without letting a bad candidate contaminate later cycles.
     """
     cfg = cfg or HybridPurifyConfig()
     output_dir = Path(output_dir)
@@ -285,20 +340,19 @@ def run_hybrid_purify_detox_yolo(
 
     replay_roots = list(cfg.external_replay_roots or cfg.external_eval_roots or [])
     eval_roots = list(cfg.external_eval_roots or cfg.external_replay_roots or [])
-    replay_failed_only = _same_root_sets(replay_roots, eval_roots)
     replay_datasets = discover_external_attack_datasets(replay_roots)
     external_eval_cfg = ExternalHardSuiteConfig(
         roots=tuple(eval_roots),
         imgsz=cfg.imgsz,
-        oda_success_mode=cfg.external_oda_success_mode,
         max_images_per_attack=cfg.external_eval_max_images_per_attack,
         replay_max_images_per_attack=cfg.external_replay_max_images_per_attack,
         seed=cfg.seed,
+        oda_success_mode=cfg.external_oda_success_mode,
     )
 
     manifest: Dict[str, Any] = {
-        "algorithm": "Hybrid-PURIFY-OD",
-        "description": "External hard-suite + PGBD-style prototypes + I-BAU + NAD/distillation + phase-separated detox",
+        "algorithm": "Hybrid-PURIFY-OD-v2",
+        "description": "External hard-suite selection + RNP-lite candidate + PGBD/I-BAU/NAD phase purifier + rollback",
         "input_model": str(model_path),
         "teacher_model": str(teacher_model) if teacher_model else None,
         "images_dir": str(images_dir),
@@ -313,11 +367,10 @@ def run_hybrid_purify_detox_yolo(
         "status": "running",
         "warnings": [],
     }
-    manifest["external_replay_failed_only"] = replay_failed_only
     if not teacher_model:
         manifest["warnings"].append("teacher_model not provided; feature distillation uses a frozen copy of the suspicious model, which is weaker.")
-    if not replay_failed_only:
-        manifest["warnings"].append("external replay roots differ from eval roots; replay uses all selected attack samples instead of failure-only path matching.")
+    if not eval_roots:
+        manifest["warnings"].append("No external_eval_roots provided; Hybrid-PURIFY will rely on internal ASR and is not a reliable external-hard-suite solution.")
     write_json(output_dir / "hybrid_purify_manifest.json", manifest)
 
     current_model = Path(model_path)
@@ -337,6 +390,7 @@ def run_hybrid_purify_detox_yolo(
         max_allowed_internal_asr=cfg.max_allowed_internal_asr,
         max_map_drop=cfg.max_map_drop,
     )
+
     before_eval = _evaluate_all(
         current_model,
         images_dir=images_dir,
@@ -349,21 +403,21 @@ def run_hybrid_purify_detox_yolo(
         tag="00_before",
     )
     clean_before = before_eval.get("clean_metrics")
-    manifest["before_eval"] = {
-        "external_max_asr": _max_asr(before_eval.get("external")),
-        "internal_max_asr": _max_asr(before_eval.get("internal")),
-        "clean_metrics": clean_before,
-    }
-    write_json(output_dir / "hybrid_purify_manifest.json", manifest)
-
-    best_item: Dict[str, Any] | None = None
-    hard_scores = _combined_scores(before_eval)
-    external_rows: Sequence[Mapping[str, Any]] | None = (before_eval.get("external") or {}).get("rows")
     baseline_external_asr = _max_asr(before_eval.get("external"))
     baseline_internal_asr = _max_asr(before_eval.get("internal"))
     baseline_external_mean = _mean_asr(before_eval.get("external"))
     baseline_internal_mean = _mean_asr(before_eval.get("internal"))
-    best_item = {
+    baseline_external_matrix = _asr_matrix(before_eval.get("external"))
+    manifest["before_eval"] = {
+        "external_max_asr": baseline_external_asr,
+        "external_mean_asr": baseline_external_mean,
+        "internal_max_asr": baseline_internal_asr,
+        "internal_mean_asr": baseline_internal_mean,
+        "clean_metrics": clean_before,
+        "external_asr_matrix": baseline_external_matrix,
+    }
+
+    best_item: Dict[str, Any] = {
         "cycle": 0,
         "model": str(current_model),
         "external_max_asr": baseline_external_asr,
@@ -372,25 +426,95 @@ def run_hybrid_purify_detox_yolo(
         "internal_mean_asr": baseline_internal_mean,
         "clean_metrics": clean_before,
         "map_drop": 0.0,
-        "selection_score": _selection_score(baseline_external_asr, baseline_internal_asr, 0.0, baseline_cfg, external_mean_asr=baseline_external_mean),
+        "selection_score": _hybrid_selection_score(baseline_external_asr, baseline_internal_asr, baseline_external_mean, 0.0, None, cfg),
         "external_json": before_eval.get("external_json"),
         "internal_json": before_eval.get("internal_json"),
-        "passes": _passes(
-            {
-                "external_max_asr": baseline_external_asr,
-                "internal_max_asr": baseline_internal_asr,
-                "map_drop": 0.0,
-                "clean_metrics": clean_before,
-            },
-            cfg,
-        ),
+        "asr_compare_to_baseline": {"rows": [], "worse": [], "n_worse": 0},
+        "passes": _passes({"external_max_asr": baseline_external_asr, "internal_max_asr": baseline_internal_asr, "map_drop": 0.0, "clean_metrics": clean_before}, cfg),
         "cycle_info": {"phase": "baseline"},
     }
     manifest["best"] = best_item
     accepted_model = Path(best_item["model"])
-    accepted_hard_scores = dict(hard_scores)
-    accepted_external_rows = external_rows
+    accepted_hard_scores = _combined_scores(before_eval)
+    accepted_external_rows = (before_eval.get("external") or {}).get("rows")
     write_json(output_dir / "hybrid_purify_manifest.json", manifest)
+
+    def evaluate_candidate(candidate_model: Path, tag: str, cycle_info: Mapping[str, Any]) -> Dict[str, Any]:
+        evals = _evaluate_all(
+            candidate_model,
+            images_dir=images_dir,
+            labels_dir=labels_dir,
+            data_yaml=data_yaml,
+            target_classes=target_classes,
+            cfg=baseline_cfg,
+            external_eval_cfg=external_eval_cfg,
+            output_dir=output_dir,
+            tag=tag,
+        )
+        ext = _max_asr(evals.get("external"))
+        inte = _max_asr(evals.get("internal"))
+        mean_ext = _mean_asr(evals.get("external"))
+        mean_int = _mean_asr(evals.get("internal"))
+        drop = _map_drop(clean_before, evals.get("clean_metrics"))
+        asr_compare = compare_asr_matrices(baseline_external_matrix, _asr_matrix(evals.get("external")), cfg.max_single_attack_asr_worsen)
+        return {
+            "model": str(candidate_model),
+            "external_max_asr": ext,
+            "external_mean_asr": mean_ext,
+            "internal_max_asr": inte,
+            "internal_mean_asr": mean_int,
+            "clean_metrics": evals.get("clean_metrics"),
+            "map_drop": drop,
+            "selection_score": _hybrid_selection_score(ext, inte, mean_ext, drop, asr_compare, cfg),
+            "external_json": evals.get("external_json"),
+            "internal_json": evals.get("internal_json"),
+            "asr_compare_to_baseline": asr_compare,
+            "passes": _passes({"external_max_asr": ext, "internal_max_asr": inte, "map_drop": drop, "clean_metrics": evals.get("clean_metrics"), "asr_compare_to_baseline": asr_compare}, cfg),
+            "cycle_info": dict(cycle_info),
+            "_evals": evals,
+        }
+
+    # RNP-lite candidate before gradient-heavy purification.
+    if cfg.run_pre_prune and int(cfg.pre_prune_top_k) > 0:
+        rnp_dir = output_dir / "00_rnp_candidate"
+        rnp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            rnp_cfg = RNPConfig(
+                imgsz=cfg.imgsz,
+                batch=max(1, min(int(cfg.batch), 4)),
+                device=cfg.device,
+                max_images=int(cfg.rnp_max_images),
+                unlearn_steps=int(cfg.rnp_unlearn_steps),
+                soft_suppression_strength=float(cfg.pre_prune_strength),
+                min_score_to_prune=float(cfg.rnp_min_score_to_prune),
+            )
+            score_csv, _summary = score_rnp_channels_for_yolo(current_model, data_yaml, rnp_dir / "rnp_scores.csv", rnp_cfg)
+            rnp_model = apply_rnp_soft_suppression(
+                current_model,
+                score_csv,
+                rnp_dir / "rnp_soft_suppressed.pt",
+                top_k=int(cfg.pre_prune_top_k),
+                strength=float(cfg.pre_prune_strength),
+                min_score=float(cfg.rnp_min_score_to_prune),
+                device=cfg.device,
+            )
+            rnp_item = evaluate_candidate(Path(rnp_model), tag="00_rnp_candidate", cycle_info={"phase": "rnp_candidate", "score_csv": str(score_csv)})
+            rnp_item["cycle"] = 0
+            manifest["rnp_candidate"] = {k: v for k, v in rnp_item.items() if k != "_evals"}
+            improved = rnp_item["selection_score"] < float(best_item["selection_score"]) - float(cfg.min_selection_improvement)
+            blocked = bool(cfg.require_no_attack_worse and int((rnp_item.get("asr_compare_to_baseline") or {}).get("n_worse", 0) or 0) > 0)
+            if improved and not blocked:
+                best_item = {k: v for k, v in rnp_item.items() if k != "_evals"}
+                manifest["best"] = best_item
+                accepted_model = Path(best_item["model"])
+                accepted_hard_scores = _combined_scores(rnp_item["_evals"])
+                accepted_external_rows = (rnp_item["_evals"].get("external") or {}).get("rows") or accepted_external_rows
+            else:
+                manifest["rnp_candidate"]["rolled_back"] = True
+                manifest["rnp_candidate"]["rollback_reason"] = "attack_worse_than_baseline" if blocked else "no_selection_improvement"
+        except Exception as exc:  # noqa: BLE001
+            manifest["warnings"].append(f"RNP pre-prune candidate failed and was skipped: {exc}")
+        write_json(output_dir / "hybrid_purify_manifest.json", manifest)
 
     for cycle in range(1, int(cfg.cycles) + 1):
         current_model = accepted_model
@@ -425,7 +549,6 @@ def run_hybrid_purify_detox_yolo(
             attack_specs=cfg.attack_specs,
             include_internal_asr=cfg.include_internal_asr,
             use_external_replay=cfg.use_external_replay,
-            external_replay_failed_only=replay_failed_only,
         )
         phases = _build_phase_plan(cfg.attack_specs, accepted_hard_scores, closed_cfg)
         cycle_info: Dict[str, Any] = {"cycle": cycle, "phases": [], "hard_scores_in": dict(accepted_hard_scores)}
@@ -441,7 +564,6 @@ def run_hybrid_purify_detox_yolo(
                 target_ids=target_ids,
                 cfg=closed_cfg,
                 replay_datasets=replay_datasets,
-                failure_rows=accepted_external_rows,
             )
             phase_dir = output_dir / f"02_cycle_{cycle:02d}_phase_{pi:02d}_{phase.name}"
             if cfg.run_feature_purifier:
@@ -465,61 +587,30 @@ def run_hybrid_purify_detox_yolo(
             cycle_info["phases"].append({"phase": asdict(phase), "data_yaml": str(phase_yaml), "model_after": str(current_model)})
             write_json(output_dir / "hybrid_purify_manifest.json", manifest)
 
-        evals = _evaluate_all(
-            current_model,
-            images_dir=images_dir,
-            labels_dir=labels_dir,
-            data_yaml=data_yaml,
-            target_classes=target_classes,
-            cfg=closed_cfg,
-            external_eval_cfg=external_eval_cfg,
-            output_dir=output_dir,
-            tag=f"cycle_{cycle:02d}",
-        )
-        external_asr = _max_asr(evals.get("external"))
-        internal_asr = _max_asr(evals.get("internal"))
-        mean_external = _mean_asr(evals.get("external"))
-        mean_internal = _mean_asr(evals.get("internal"))
-        map_drop = _map_drop(clean_before, evals.get("clean_metrics"))
-        score = _selection_score(external_asr, internal_asr, map_drop, closed_cfg, external_mean_asr=mean_external)
-        item = {
-            "cycle": cycle,
-            "model": str(current_model),
-            "external_max_asr": external_asr,
-            "external_mean_asr": mean_external,
-            "internal_max_asr": internal_asr,
-            "internal_mean_asr": mean_internal,
-            "clean_metrics": evals.get("clean_metrics"),
-            "map_drop": map_drop,
-            "selection_score": score,
-            "external_json": evals.get("external_json"),
-            "internal_json": evals.get("internal_json"),
-            "passes": _passes({"external_max_asr": external_asr, "internal_max_asr": internal_asr, "map_drop": map_drop, "clean_metrics": evals.get("clean_metrics")}, cfg),
-            "cycle_info": cycle_info,
-        }
-        manifest["cycles"].append(item)
-        improved = item["selection_score"] < float(best_item["selection_score"]) - float(closed_cfg.min_selection_improvement)
-        if improved:
+        item = evaluate_candidate(Path(current_model), tag=f"cycle_{cycle:02d}", cycle_info=cycle_info)
+        item["cycle"] = cycle
+        evals = item.pop("_evals")
+        blocked = bool(cfg.require_no_attack_worse and int((item.get("asr_compare_to_baseline") or {}).get("n_worse", 0) or 0) > 0)
+        improved = item["selection_score"] < float(best_item["selection_score"]) - float(cfg.min_selection_improvement)
+        if improved and not blocked:
+            item["rolled_back"] = False
             best_item = item
             manifest["best"] = item
             accepted_model = Path(item["model"])
             accepted_hard_scores = _combined_scores(evals)
             accepted_external_rows = (evals.get("external") or {}).get("rows") or accepted_external_rows
-            item["rolled_back"] = False
         else:
             item["rolled_back"] = True
             item["rollback_to"] = str(accepted_model)
-            item["rollback_reason"] = "no_selection_improvement"
+            item["rollback_reason"] = "attack_worse_than_baseline" if blocked else "no_selection_improvement"
             current_model = accepted_model
+        manifest["cycles"].append(item)
         write_json(output_dir / "hybrid_purify_manifest.json", manifest)
         if item["passes"] and cfg.stop_on_pass:
             manifest["status"] = "passed_early"
             break
 
-    if best_item is None:
-        manifest["status"] = "failed_no_checkpoint"
-    else:
-        manifest["final_model"] = best_item["model"]
-        manifest["status"] = "passed" if best_item["passes"] else "failed_external_asr_or_map"
+    manifest["final_model"] = str(accepted_model)
+    manifest["status"] = "passed" if best_item.get("passes") else "failed_external_asr_or_map"
     write_json(output_dir / "hybrid_purify_manifest.json", manifest)
     return manifest

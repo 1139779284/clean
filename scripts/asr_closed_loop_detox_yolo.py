@@ -29,12 +29,11 @@ def parse_args() -> argparse.Namespace:
         "--external-oda-success-mode",
         choices=["localized_any_recalled", "class_presence", "strict_all_recalled"],
         default=None,
-        help="Held-out external ODA ASR definition used for selection.",
+        help="ODA ASR definition used for external hard-suite evaluation.",
     )
     p.add_argument("--imgsz", type=int, default=None)
     p.add_argument("--batch", type=int, default=None)
     p.add_argument("--device", default=None)
-    p.add_argument("--workers", type=int, default=None)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--cycles", type=int, default=None)
     p.add_argument("--phase-epochs", type=int, default=None)
@@ -55,16 +54,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--adaptive-boost", type=float, default=None)
     p.add_argument("--active-asr-threshold", type=float, default=None)
     p.add_argument("--top-k-attacks-per-cycle", type=int, default=None)
-    p.add_argument("--clean-anchor-every-cycle", action="store_true", default=None)
-    p.add_argument("--clean-recovery-every-cycle", action="store_true", default=None)
     p.add_argument("--no-internal-asr", action="store_true", default=None)
     p.add_argument("--no-external-replay", action="store_true", default=None)
-    p.add_argument("--external-replay-all", action="store_true", default=None, help="Replay all matching external hard-suite samples instead of only success=True failures.")
-    p.add_argument("--no-rollback-on-regression", action="store_true", default=None)
-    p.add_argument("--no-rollback-on-no-improvement", action="store_true", default=None)
-    p.add_argument("--max-external-asr-regression", type=float, default=None)
-    p.add_argument("--max-external-mean-asr-regression", type=float, default=None)
-    p.add_argument("--min-selection-improvement", type=float, default=None)
     p.add_argument("--no-stop-on-pass", action="store_true", default=None)
     return p.parse_args()
 
@@ -89,12 +80,6 @@ def _resolved(args: argparse.Namespace) -> dict:
             normalized["include_internal_asr"] = False
         elif key == "no_external_replay" and value:
             normalized["use_external_replay"] = False
-        elif key == "external_replay_all" and value:
-            normalized["external_replay_failed_only"] = False
-        elif key == "no_rollback_on_regression" and value:
-            normalized["rollback_on_external_regression"] = False
-        elif key == "no_rollback_on_no_improvement" and value:
-            normalized["rollback_on_no_improvement"] = False
         elif key == "no_stop_on_pass" and value:
             normalized["stop_on_pass"] = False
         else:

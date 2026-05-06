@@ -44,6 +44,7 @@ The immediate use case is Ultralytics YOLO helmet/head detection, including clea
 | Strong detox pipeline | Implemented | `model_security_gate/detox/strong_pipeline.py`, `scripts/strong_detox_yolo.py` |
 | Teacher train/use | Implemented | `model_security_gate/detox/teacher.py` |
 | Progressive channel pruning | Implemented | `model_security_gate/detox/progressive_prune.py`, `scripts/progressive_prune_yolo.py` |
+| RNP-lite soft pruning candidate | Implemented as conservative candidate with rollback gates | `model_security_gate/detox/rnp.py`, `scripts/rnp_prune_yolo.py` |
 | ANP-like channel scoring | Approximate implementation | `model_security_gate/detox/anp.py`, `model_security_gate/detox/channel_scoring.py` |
 | FMP-like feature-map scoring | Implemented as scoring module; not fully wired into all main pipelines | `model_security_gate/detox/fmp.py` |
 | NAD-style feature/attention distillation | Implemented | `model_security_gate/detox/feature_hooks.py`, `model_security_gate/detox/feature_distill.py` |
@@ -77,6 +78,7 @@ These names appear in the design, but the current code should be treated as engi
 | PGBD | Prototype alignment and target-prototype suppression | Full activation-space geometric sanitization and robust prototype selection |
 | TRACE | TTA consistency approximates object-detection consistency checks | Exact TRACE transformation consistency protocol and thresholds |
 | CAM guard | Occlusion attribution exists | Grad-CAM / EigenCAM / attention localization visual verifier |
+| RNP | RNP-lite soft-pruning candidate exists and is gated by external ASR/mAP rollback | Full reconstructive neuron pruning with explicit unlearn/recover schedule and stronger tests |
 
 ## Missing Algorithms / Important Gaps
 
@@ -89,7 +91,6 @@ These are not currently implemented as first-class modules.
 | Spectral Signatures | `model_security_gate/scan/spectral_scan.py` | High | Robust class-wise spectral outlier scoring for poisoned samples |
 | STRIP | `model_security_gate/scan/strip_scan.py` | Medium | Entropy/consistency under input mixing; useful for input-agnostic triggers |
 | ABS | `model_security_gate/scan/abs_scan.py` | Medium | Artificial neuron stimulation; current channel scan is only a proxy |
-| RNP | `model_security_gate/detox/rnp.py` | High | Add unlearn/recover loop to expose and prune backdoor neurons |
 | Full FMP integration | `model_security_gate/detox/fmp.py` plus pipeline wiring | High | Existing FMP score should influence pruning and Hybrid-PURIFY candidate selection |
 | Formal intake checks | `model_security_gate/intake/` | Medium | Model card, training log, preprocess, class map, artifact hash and provenance validation |
 | Clean teacher policy | config/docs | High | Current experiments can use a reference model, but production needs a truly trusted teacher |
@@ -120,7 +121,7 @@ Do not treat Hybrid-PURIFY-OD as production-safe until external ASR drops and cl
 
 1. Add Activation Clustering and Spectral Signatures scans.
 2. Wire FMP scores into strong/hybrid pruning and candidate selection.
-3. Implement RNP unlearn/recover pruning.
+3. Upgrade RNP-lite into full unlearn/recover reconstructive pruning.
 4. Add Neural Cleanse-lite trigger inversion for fixed/blend triggers.
 5. Add a formal benchmark protocol with separate replay and held-out external suites.
 6. Add Grad-CAM/EigenCAM localization checks for wrong-region attention.

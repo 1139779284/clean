@@ -45,7 +45,6 @@ class ASRClosedLoopConfig:
     imgsz: int = 640
     batch: int = 16
     device: str | int | None = None
-    workers: int = 0
     seed: int = 42
     cycles: int = 4
     max_allowed_external_asr: float = 0.10
@@ -70,42 +69,21 @@ class ASRClosedLoopConfig:
     top_k_attacks_per_cycle: int = 3
     phase_epochs: int = 3
     recovery_epochs: int = 2
-    clean_anchor_every_cycle: bool = False
-    clean_recovery_every_cycle: bool = False
     lr0: float = 2e-5
     recovery_lr0: float = 1e-5
     weight_decay: float = 7e-4
     attack_specs: Sequence[AttackTransformConfig] = field(default_factory=lambda: default_attack_suite())
     include_internal_asr: bool = True
     use_external_replay: bool = True
-    external_replay_failed_only: bool = True
-    rollback_on_external_regression: bool = True
-    rollback_on_no_improvement: bool = True
-    max_external_asr_regression: float = 0.005
-    max_external_mean_asr_regression: float = 0.02
-    min_selection_improvement: float = 1e-4
     stop_on_pass: bool = True
 
 
-def _eval_clean_yolo(
-    model_path: str | Path,
-    data_yaml: str | Path,
-    imgsz: int,
-    batch: int,
-    device: str | int | None = None,
-    workers: int = 0,
-) -> Dict[str, Any] | None:
+def _eval_clean_yolo(model_path: str | Path, data_yaml: str | Path, imgsz: int, batch: int, device: str | int | None = None) -> Dict[str, Any] | None:
     try:
         from ultralytics import YOLO
 
         model = YOLO(str(model_path))
-        kwargs: Dict[str, Any] = {
-            "data": str(data_yaml),
-            "imgsz": int(imgsz),
-            "batch": int(batch),
-            "workers": int(workers),
-            "verbose": False,
-        }
+        kwargs: Dict[str, Any] = {"data": str(data_yaml), "imgsz": int(imgsz), "batch": int(batch), "verbose": False}
         if device is not None:
             kwargs["device"] = device
         metrics = model.val(**kwargs)
@@ -142,15 +120,9 @@ def _mean_asr(result: Mapping[str, Any] | None) -> float:
         return 0.0
 
 
-def _selection_score(
-    external_asr: float,
-    internal_asr: float,
-    map_drop: float | None,
-    cfg: ASRClosedLoopConfig,
-    external_mean_asr: float | None = None,
-) -> float:
+def _selection_score(external_asr: float, internal_asr: float, map_drop: float | None, cfg: ASRClosedLoopConfig) -> float:
     # External hard suite dominates selection because internal regression can be self-consistent.
-    score = 1.20 * float(external_asr) + 0.25 * float(external_mean_asr or 0.0) + 0.35 * float(internal_asr)
+    score = 1.25 * float(external_asr) + 0.35 * float(internal_asr)
     if map_drop is not None and map_drop > float(cfg.max_map_drop):
         score += 8.0 * (float(map_drop) - float(cfg.max_map_drop))
     return float(score)
@@ -181,25 +153,6 @@ def _repeat_for_score(score: float, cfg: ASRClosedLoopConfig) -> int:
     return max(int(cfg.base_attack_repeat), min(int(cfg.max_attack_repeat), repeat))
 
 
-def _trigger_preserving_kwargs() -> Dict[str, Any]:
-    return {
-        "mosaic": 0.0,
-        "mixup": 0.0,
-        "copy_paste": 0.0,
-        "erasing": 0.0,
-        "label_smoothing": 0.0,
-        "hsv_h": 0.0,
-        "hsv_s": 0.0,
-        "hsv_v": 0.0,
-        "degrees": 0.0,
-        "translate": 0.0,
-        "scale": 0.0,
-        "shear": 0.0,
-        "perspective": 0.0,
-        "fliplr": 0.0,
-    }
-
-
 def _build_phase_plan(
     attack_specs: Sequence[AttackTransformConfig],
     hard_scores: Mapping[str, float],
@@ -214,21 +167,19 @@ def _build_phase_plan(
 
     phases: List[ClosedLoopPhase] = []
     # Clean anchor first: avoids immediately overfitting to hard negatives.
-    if cfg.clean_anchor_every_cycle or not hard_scores:
-        phases.append(
-            ClosedLoopPhase(
-                name="clean_anchor",
-                attacks=(),
-                epochs=max(1, int(cfg.recovery_epochs)),
-                clean_repeat=int(cfg.recovery_clean_repeat),
-                attack_repeat=0,
-                lr0=float(cfg.recovery_lr0),
-                replay_external=False,
-                train_kwargs={"mosaic": 0.5, "mixup": 0.05, "copy_paste": 0.05, "erasing": 0.20, "label_smoothing": 0.03},
-            )
+    phases.append(
+        ClosedLoopPhase(
+            name="clean_anchor",
+            attacks=(),
+            epochs=max(1, int(cfg.recovery_epochs)),
+            clean_repeat=int(cfg.recovery_clean_repeat),
+            attack_repeat=0,
+            lr0=float(cfg.recovery_lr0),
+            replay_external=False,
+            train_kwargs={"mosaic": 0.5, "mixup": 0.05, "copy_paste": 0.05, "erasing": 0.20, "label_smoothing": 0.03},
         )
+    )
 
-    selected_groups: List[tuple[str, List[AttackTransformConfig], float]] = []
     for group_name in ["oga", "oda", "semantic", "wanet"]:
         specs = groups[group_name]
         if not specs:
@@ -240,29 +191,16 @@ def _build_phase_plan(
         if not selected:
             continue
         group_score = max([score_for_attack_name(hard_scores, s.name, kind=s.kind, goal=s.goal) for s in selected] + [0.0])
-        selected_groups.append((group_name, selected, group_score))
-
-    # Run the hardest external failure mode first. With detector backdoors this
-    # matters: OGA hardening can raise recall/FP behavior and accidentally make
-    # ODA or semantic failures worse if it always runs first.
-    selected_groups.sort(key=lambda item: item[2], reverse=True)
-
-    for group_name, selected, group_score in selected_groups:
         attack_repeat = _repeat_for_score(group_score, cfg)
-        if group_name == "oga":
-            clean_repeat = max(int(cfg.base_clean_repeat), int(round(attack_repeat * 0.5)))
-        elif group_name == "oda":
-            clean_repeat = max(int(cfg.base_clean_repeat), int(attack_repeat))
-        else:
-            clean_repeat = max(int(cfg.base_clean_repeat), int(round(attack_repeat * 1.0)))
+        clean_repeat = max(int(cfg.base_clean_repeat), int(round(attack_repeat * 1.5)))
         if group_name == "oda":
-            kwargs = _trigger_preserving_kwargs()
+            kwargs = {"mosaic": 0.6, "mixup": 0.10, "copy_paste": 0.10, "erasing": 0.10, "label_smoothing": 0.02}
         elif group_name == "semantic":
-            kwargs = {"mosaic": 0.15, "mixup": 0.0, "copy_paste": 0.0, "erasing": 0.05, "hsv_h": 0.02, "hsv_s": 0.25, "hsv_v": 0.20, "label_smoothing": 0.0}
+            kwargs = {"mosaic": 0.7, "mixup": 0.12, "copy_paste": 0.10, "erasing": 0.25, "hsv_h": 0.06, "hsv_s": 0.75, "hsv_v": 0.50, "label_smoothing": 0.04}
         elif group_name == "wanet":
-            kwargs = _trigger_preserving_kwargs()
+            kwargs = {"mosaic": 0.5, "mixup": 0.05, "copy_paste": 0.05, "erasing": 0.15, "label_smoothing": 0.03}
         else:
-            kwargs = _trigger_preserving_kwargs()
+            kwargs = {"mosaic": 0.6, "mixup": 0.10, "copy_paste": 0.08, "erasing": 0.25, "label_smoothing": 0.04}
         phases.append(
             ClosedLoopPhase(
                 name=f"{group_name}_hardening",
@@ -277,20 +215,20 @@ def _build_phase_plan(
             )
         )
 
-    if cfg.clean_recovery_every_cycle:
-        phases.append(
-            ClosedLoopPhase(
-                name="clean_recovery",
-                attacks=(),
-                epochs=max(1, int(cfg.recovery_epochs)),
-                clean_repeat=int(cfg.recovery_clean_repeat),
-                attack_repeat=0,
-                lr0=float(cfg.recovery_lr0),
-                weight_decay=float(cfg.weight_decay),
-                replay_external=False,
-                train_kwargs={"mosaic": 0.7, "mixup": 0.10, "copy_paste": 0.08, "erasing": 0.25, "label_smoothing": 0.03},
-            )
+    # Final clean recovery every cycle to recover normal detector features.
+    phases.append(
+        ClosedLoopPhase(
+            name="clean_recovery",
+            attacks=(),
+            epochs=max(1, int(cfg.recovery_epochs)),
+            clean_repeat=int(cfg.recovery_clean_repeat),
+            attack_repeat=0,
+            lr0=float(cfg.recovery_lr0),
+            weight_decay=float(cfg.weight_decay),
+            replay_external=False,
+            train_kwargs={"mosaic": 0.7, "mixup": 0.10, "copy_paste": 0.08, "erasing": 0.25, "label_smoothing": 0.03},
         )
+    )
     return phases
 
 
@@ -304,7 +242,6 @@ def _build_phase_dataset(
     target_ids: Sequence[int],
     cfg: ASRClosedLoopConfig,
     replay_datasets: Sequence[ExternalAttackDataset],
-    failure_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> Path:
     phase_dir = output_dir / f"01_cycle_{cycle:02d}_{phase.name}_dataset"
     yaml_path = build_asr_aware_yolo_dataset(
@@ -333,8 +270,6 @@ def _build_phase_dataset(
             max_images_per_attack=int(cfg.external_replay_max_images_per_attack),
             split="train",
             seed=cfg.seed + cycle,
-            failure_rows=failure_rows,
-            failure_only=bool(cfg.external_replay_failed_only),
         )
     write_json(phase_dir / "phase_manifest.json", {"phase": asdict(phase), "replay_stats": replay_stats, "data_yaml": str(yaml_path)})
     return yaml_path
@@ -367,7 +302,7 @@ def _evaluate_all(
         out["internal"] = internal
         out["internal_json"] = str(int_json)
         out["internal_rows"] = str(int_rows)
-    out["clean_metrics"] = _eval_clean_yolo(model, data_yaml, cfg.imgsz, cfg.batch, cfg.device, cfg.workers)
+    out["clean_metrics"] = _eval_clean_yolo(model, data_yaml, cfg.imgsz, cfg.batch, cfg.device)
     return out
 
 
@@ -376,39 +311,6 @@ def _combined_scores(evals: Mapping[str, Any]) -> Dict[str, float]:
     for key in ["external", "internal"]:
         scores.update(attack_score_lookup(evals.get(key)))
     return scores
-
-
-def _candidate_item(
-    *,
-    cycle: int,
-    model: str | Path,
-    evals: Mapping[str, Any],
-    clean_before: Mapping[str, Any] | None,
-    cfg: ASRClosedLoopConfig,
-    phase_record: Mapping[str, Any] | None = None,
-) -> Dict[str, Any]:
-    external_asr = _max_asr(evals.get("external")) if evals.get("external") else _max_asr(evals.get("internal"))
-    internal_asr = _max_asr(evals.get("internal"))
-    clean_after = evals.get("clean_metrics")
-    drop = _map_drop(clean_before, clean_after)
-    external_mean = _mean_asr(evals.get("external")) if evals.get("external") else None
-    score = _selection_score(external_asr, internal_asr, drop, cfg, external_mean_asr=external_mean)
-    return {
-        "cycle": cycle,
-        "model": str(model),
-        "external_max_asr": float(external_asr),
-        "external_mean_asr": external_mean,
-        "internal_max_asr": float(internal_asr),
-        "internal_mean_asr": _mean_asr(evals.get("internal")) if evals.get("internal") else None,
-        "clean_metrics": clean_after,
-        "map_drop": drop,
-        "selection_score": score,
-        "passes_external_asr": external_asr <= float(cfg.max_allowed_external_asr),
-        "passes_internal_asr": internal_asr <= float(cfg.max_allowed_internal_asr),
-        "passes_map": (drop is None) or (drop <= float(cfg.max_map_drop)),
-        "eval_paths": {k: v for k, v in evals.items() if k.endswith("_json") or k.endswith("_rows")},
-        "phase_record": dict(phase_record or {}),
-    }
 
 
 def run_asr_closed_loop_detox_yolo(
@@ -440,8 +342,8 @@ def run_asr_closed_loop_detox_yolo(
         roots=tuple(cfg.external_eval_roots or ()),
         max_images_per_attack=int(cfg.external_eval_max_images_per_attack),
         imgsz=cfg.imgsz,
-        oda_success_mode=cfg.external_oda_success_mode,
         seed=cfg.seed,
+        oda_success_mode=cfg.external_oda_success_mode,
     )
     replay_roots = tuple(cfg.external_replay_roots or cfg.external_eval_roots or ())
     replay_datasets = discover_external_attack_datasets(replay_roots)
@@ -467,31 +369,18 @@ def run_asr_closed_loop_detox_yolo(
     write_json(output_dir / "asr_closed_loop_detox_manifest.json", manifest)
 
     current_model = Path(model_path)
-    clean_before = _eval_clean_yolo(current_model, data_yaml, cfg.imgsz, cfg.batch, cfg.device, cfg.workers)
+    clean_before = _eval_clean_yolo(current_model, data_yaml, cfg.imgsz, cfg.batch, cfg.device)
     manifest["clean_before"] = clean_before
     pre_eval = _evaluate_all(current_model, images_dir, labels_dir, data_yaml, target_classes, cfg, external_eval_cfg, output_dir, tag="00_before")
     manifest["before_eval"] = {k: v for k, v in pre_eval.items() if k.endswith("_json") or k == "clean_metrics"}
     hard_scores = _combined_scores(pre_eval)
-    last_external_rows: Sequence[Mapping[str, Any]] | None = (pre_eval.get("external") or {}).get("rows")
-    best_item: Dict[str, Any] | None = _candidate_item(
-        cycle=0,
-        model=current_model,
-        evals=pre_eval,
-        clean_before=clean_before,
-        cfg=cfg,
-        phase_record={"phase": "baseline"},
-    )
-    manifest["best"] = best_item
-    accepted_model = Path(best_item["model"])
-    accepted_hard_scores = dict(hard_scores)
-    accepted_external_rows: Sequence[Mapping[str, Any]] | None = last_external_rows
+    best_item: Dict[str, Any] | None = None
 
     for cycle in range(1, int(cfg.cycles) + 1):
-        current_model = accepted_model
-        phases = _build_phase_plan(cfg.attack_specs, accepted_hard_scores, cfg)
+        phases = _build_phase_plan(cfg.attack_specs, hard_scores, cfg)
         cycle_record: Dict[str, Any] = {"cycle": cycle, "phases": [asdict(p) for p in phases]}
         for phase_idx, phase in enumerate(phases, 1):
-            phase_yaml = _build_phase_dataset(phase, cycle, output_dir, images_dir, labels_dir, names, target_ids, cfg, replay_datasets, failure_rows=accepted_external_rows)
+            phase_yaml = _build_phase_dataset(phase, cycle, output_dir, images_dir, labels_dir, names, target_ids, cfg, replay_datasets)
             project = output_dir / f"02_cycle_{cycle:02d}_phase_{phase_idx:02d}_{phase.name}_train"
             train_kwargs = dict(phase.train_kwargs)
             train_counterfactual_finetune(
@@ -503,7 +392,6 @@ def run_asr_closed_loop_detox_yolo(
                 epochs=int(phase.epochs),
                 batch=cfg.batch,
                 device=cfg.device,
-                workers=cfg.workers,
                 lr0=float(phase.lr0),
                 weight_decay=float(phase.weight_decay),
                 **train_kwargs,
@@ -512,40 +400,32 @@ def run_asr_closed_loop_detox_yolo(
             cycle_record.setdefault("trained_phases", []).append({"phase": phase.name, "model": str(current_model), "data_yaml": str(phase_yaml)})
 
         evals = _evaluate_all(current_model, images_dir, labels_dir, data_yaml, target_classes, cfg, external_eval_cfg, output_dir, tag=f"cycle_{cycle:02d}")
-        item = _candidate_item(cycle=cycle, model=current_model, evals=evals, clean_before=clean_before, cfg=cfg, phase_record=cycle_record)
-        previous_best_external = float((best_item or {}).get("external_max_asr") or 0.0)
-        previous_best_external_mean = (best_item or {}).get("external_mean_asr")
-        external_mean_regressed = (
-            item.get("external_mean_asr") is not None
-            and previous_best_external_mean is not None
-            and float(item["external_mean_asr"]) > float(previous_best_external_mean) + float(cfg.max_external_mean_asr_regression)
-        )
-        improved = best_item is None or item["selection_score"] < float(best_item["selection_score"]) - float(cfg.min_selection_improvement)
-        should_rollback = bool(cfg.rollback_on_external_regression) and (
-            item["external_max_asr"] > previous_best_external + float(cfg.max_external_asr_regression)
-            or external_mean_regressed
-            or (bool(cfg.rollback_on_no_improvement) and not improved)
-        )
-        if should_rollback:
-            item["rolled_back"] = True
-            item["rollback_to"] = str(accepted_model)
-            if item["external_max_asr"] > previous_best_external + float(cfg.max_external_asr_regression):
-                item["rollback_reason"] = "external_max_asr_regressed"
-            elif external_mean_regressed:
-                item["rollback_reason"] = "external_mean_asr_regressed"
-            else:
-                item["rollback_reason"] = "no_selection_improvement"
-            current_model = accepted_model
-            improved = False
-        else:
-            item["rolled_back"] = False
+        external_asr = _max_asr(evals.get("external")) if evals.get("external") else _max_asr(evals.get("internal"))
+        internal_asr = _max_asr(evals.get("internal"))
+        clean_after = evals.get("clean_metrics")
+        drop = _map_drop(clean_before, clean_after)
+        score = _selection_score(external_asr, internal_asr, drop, cfg)
+        item = {
+            "cycle": cycle,
+            "model": str(current_model),
+            "external_max_asr": float(external_asr),
+            "external_mean_asr": _mean_asr(evals.get("external")) if evals.get("external") else None,
+            "internal_max_asr": float(internal_asr),
+            "internal_mean_asr": _mean_asr(evals.get("internal")) if evals.get("internal") else None,
+            "clean_metrics": clean_after,
+            "map_drop": drop,
+            "selection_score": score,
+            "passes_external_asr": external_asr <= float(cfg.max_allowed_external_asr),
+            "passes_internal_asr": internal_asr <= float(cfg.max_allowed_internal_asr),
+            "passes_map": (drop is None) or (drop <= float(cfg.max_map_drop)),
+            "eval_paths": {k: v for k, v in evals.items() if k.endswith("_json") or k.endswith("_rows")},
+            "phase_record": cycle_record,
+        }
         manifest["cycles"].append(item)
-        if improved:
+        if best_item is None or item["selection_score"] < best_item["selection_score"]:
             best_item = item
             manifest["best"] = item
-            accepted_model = Path(item["model"])
-            accepted_hard_scores = _combined_scores(evals)
-            accepted_external_rows = (evals.get("external") or {}).get("rows") or accepted_external_rows
+        hard_scores = _combined_scores(evals)
         write_json(output_dir / "asr_closed_loop_detox_manifest.json", manifest)
         if cfg.stop_on_pass and item["passes_external_asr"] and item["passes_internal_asr"] and item["passes_map"]:
             manifest["status"] = "passed_early"

@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
         "--external-oda-success-mode",
         choices=["localized_any_recalled", "class_presence", "strict_all_recalled"],
         default=None,
-        help="Held-out external ODA ASR definition used for selection.",
+        help="ODA ASR definition used for external hard-suite evaluation.",
     )
     p.add_argument("--max-images", type=int, default=None)
     p.add_argument("--eval-max-images", type=int, default=None)
@@ -47,6 +47,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-clean-recovery-finetune", action="store_true", default=None)
     p.add_argument("--trusted-teacher-required", action="store_true", default=None)
     p.add_argument("--amp", action="store_true", default=None)
+    p.add_argument("--no-pre-prune", action="store_true", default=None, help="Disable RNP-lite pre-prune candidate")
+    p.add_argument("--pre-prune-top-k", type=int, default=None)
+    p.add_argument("--pre-prune-strength", type=float, default=None)
+    p.add_argument("--rnp-unlearn-steps", type=int, default=None)
+    p.add_argument("--rnp-max-images", type=int, default=None)
+    p.add_argument("--allow-attack-worse", action="store_true", default=None, help="Allow candidates that worsen a single external attack; not recommended")
+    p.add_argument("--max-single-attack-asr-worsen", type=float, default=None)
+    p.add_argument("--external-mean-asr-weight", type=float, default=None)
     return p.parse_args()
 
 
@@ -68,6 +76,8 @@ def _resolved(args: argparse.Namespace) -> dict:
     bool_map = {
         "no_feature_purifier": ("run_feature_purifier", False),
         "no_clean_recovery_finetune": ("run_clean_recovery_finetune", False),
+        "no_pre_prune": ("run_pre_prune", False),
+        "allow_attack_worse": ("require_no_attack_worse", False),
     }
     norm = {}
     for k, v in cli.items():

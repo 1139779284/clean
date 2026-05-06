@@ -43,7 +43,6 @@ def train_counterfactual_finetune(
         "erasing": float(train_kwargs.pop("erasing", 0.25)),
         "label_smoothing": float(train_kwargs.pop("label_smoothing", 0.03)),
         "close_mosaic": int(train_kwargs.pop("close_mosaic", 5)),
-        "workers": int(train_kwargs.pop("workers", 0)),
     }
     if device is not None:
         kwargs["device"] = device

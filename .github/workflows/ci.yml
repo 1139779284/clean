@@ -35,3 +35,4 @@ jobs:
           python scripts/asr_closed_loop_detox_yolo.py --help >/dev/null
           python scripts/run_external_hard_suite.py --help >/dev/null
           python scripts/hybrid_purify_detox_yolo.py --help >/dev/null
+          python scripts/rnp_prune_yolo.py --help >/dev/null

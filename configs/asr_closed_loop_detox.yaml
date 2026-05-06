@@ -24,9 +24,9 @@ asr_closed_loop_detox:
   external_eval_max_images_per_attack: 0
   external_replay_max_images_per_attack: 250
   # ODA ASR definition:
-  # - localized_any_recalled: default; at least one GT target recalled means no disappearance
-  # - class_presence: looser; any target-class prediction means no disappearance
-  # - strict_all_recalled: stricter; any missed GT target means disappearance
+  # - localized_any_recalled: success if no GT target is spatially recalled
+  # - class_presence: success only if no target-class detection exists
+  # - strict_all_recalled: success if any GT target is missing
   external_oda_success_mode: localized_any_recalled
   base_clean_repeat: 2
   recovery_clean_repeat: 4
@@ -37,19 +37,11 @@ asr_closed_loop_detox:
   top_k_attacks_per_cycle: 3
   phase_epochs: 3
   recovery_epochs: 2
-  clean_anchor_every_cycle: false
-  clean_recovery_every_cycle: false
   lr0: 0.00002
   recovery_lr0: 0.00001
   weight_decay: 0.0007
   include_internal_asr: true
   use_external_replay: true
-  external_replay_failed_only: true
-  rollback_on_external_regression: true
-  rollback_on_no_improvement: true
-  max_external_asr_regression: 0.005
-  max_external_mean_asr_regression: 0.02
-  min_selection_improvement: 0.0001
   stop_on_pass: true
   attacks:
     - name: badnet_oga
