@@ -75,7 +75,7 @@ class HybridPurifyConfig:
     lr: float = 2e-5
     recovery_lr: float = 1e-5
     weight_decay: float = 7e-4
-    num_workers: int = 2
+    num_workers: int = 0
     amp: bool = False
     max_hook_layers: int = 6
     prototype_max_batches: int = 40

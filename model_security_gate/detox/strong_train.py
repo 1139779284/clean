@@ -43,7 +43,7 @@ class StrongDetoxConfig:
     imgsz: int = 640
     lr: float = 2e-5
     weight_decay: float = 5e-4
-    num_workers: int = 2
+    num_workers: int = 0
     device: Optional[str] = None
     max_train_images: Optional[int] = None
     max_val_images: Optional[int] = None
@@ -85,7 +85,10 @@ class StrongDetoxConfig:
 
 def _device_from_cfg(cfg: StrongDetoxConfig) -> torch.device:
     if cfg.device:
-        return torch.device(cfg.device)
+        dev = str(cfg.device)
+        if dev.isdigit():
+            return torch.device(f"cuda:{dev}" if torch.cuda.is_available() else "cpu")
+        return torch.device(dev)
     return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
@@ -106,10 +109,10 @@ def save_ultralytics_yolo(yolo, path: str | Path) -> Path:
 
 
 def _torch_model(yolo_or_model) -> torch.nn.Module:
-    if isinstance(yolo_or_model, torch.nn.Module):
-        return yolo_or_model
     if hasattr(yolo_or_model, "model") and isinstance(yolo_or_model.model, torch.nn.Module):
         return yolo_or_model.model
+    if isinstance(yolo_or_model, torch.nn.Module):
+        return yolo_or_model
     raise TypeError("Expected Ultralytics YOLO wrapper or torch model")
 
 
@@ -174,6 +177,8 @@ def run_strong_detox_training(cfg: StrongDetoxConfig) -> Dict[str, Any]:
 
     student_yolo = load_ultralytics_yolo(cfg.model, device)
     student = _torch_model(student_yolo).to(device)
+    for p in student.parameters():
+        p.requires_grad_(True)
     teacher_yolo, teacher = _make_teacher(cfg, student_yolo, device)
     teacher = teacher.to(device).eval()
     for p in teacher.parameters():

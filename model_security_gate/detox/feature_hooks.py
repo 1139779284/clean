@@ -9,12 +9,12 @@ import torch.nn.functional as F
 
 def get_torch_model(obj: Any) -> torch.nn.Module:
     """Extract the underlying torch module from common wrappers."""
-    if isinstance(obj, torch.nn.Module):
-        return obj
     if hasattr(obj, "model") and isinstance(getattr(obj, "model"), torch.nn.Module):
         return obj.model
     if hasattr(obj, "model") and hasattr(obj.model, "model") and isinstance(obj.model.model, torch.nn.Module):
         return obj.model.model
+    if isinstance(obj, torch.nn.Module):
+        return obj
     raise TypeError("Could not extract a torch.nn.Module from object")
 
 

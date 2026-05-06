@@ -55,9 +55,11 @@ def _load_yolo(model_path: str | Path, device):
 def _torch_model(yolo_or_model):
     import torch
 
+    if hasattr(yolo_or_model, "model") and isinstance(yolo_or_model.model, torch.nn.Module):
+        return yolo_or_model.model
     if isinstance(yolo_or_model, torch.nn.Module):
         return yolo_or_model
-    return yolo_or_model.model
+    raise TypeError("Expected Ultralytics YOLO wrapper or torch model")
 
 
 def _select_conv_modules(model, max_layers: int) -> List[tuple[str, Any]]:
@@ -118,9 +120,10 @@ class _GateHook:
         if not torch.is_tensor(output) or output.ndim < 2:
             return output
         g = self.gate().view(1, -1, *([1] * (output.ndim - 2)))
-        out = output.clone()
-        out[:, : self.active_channels] = out[:, : self.active_channels] * g
-        return out
+        gated = output[:, : self.active_channels] * g
+        if self.active_channels >= output.shape[1]:
+            return gated
+        return torch.cat([gated, output[:, self.active_channels :]], dim=1)
 
     def remove(self) -> None:
         self.handle.remove()

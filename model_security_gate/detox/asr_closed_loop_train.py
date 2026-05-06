@@ -83,7 +83,7 @@ def _eval_clean_yolo(model_path: str | Path, data_yaml: str | Path, imgsz: int, 
         from ultralytics import YOLO
 
         model = YOLO(str(model_path))
-        kwargs: Dict[str, Any] = {"data": str(data_yaml), "imgsz": int(imgsz), "batch": int(batch), "verbose": False}
+        kwargs: Dict[str, Any] = {"data": str(data_yaml), "imgsz": int(imgsz), "batch": int(batch), "verbose": False, "workers": 0}
         if device is not None:
             kwargs["device"] = device
         metrics = model.val(**kwargs)

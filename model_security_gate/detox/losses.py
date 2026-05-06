@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from types import SimpleNamespace
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -15,6 +16,54 @@ def _zero_like_model_loss(model: torch.nn.Module) -> torch.Tensor:
     return p.sum() * 0.0
 
 
+def _ensure_ultralytics_loss_hyp(model: torch.nn.Module) -> None:
+    """Make exported Ultralytics models usable with DetectionModel.loss().
+
+    Some `.pt` files restore `model.args` as a plain dict containing only a few
+    training keys. Ultralytics' loss path expects attribute-style hyperparameters
+    such as `hyp.box`, `hyp.cls`, and `hyp.dfl`. Without this guard, custom detox
+    training crashes before doing any useful work.
+    """
+    defaults = {
+        "box": 7.5,
+        "cls": 0.5,
+        "dfl": 1.5,
+        "pose": 12.0,
+        "kobj": 1.0,
+        "label_smoothing": 0.0,
+    }
+    args = getattr(model, "args", None)
+    if isinstance(args, Mapping):
+        data = dict(defaults)
+        data.update(dict(args))
+        model.args = SimpleNamespace(**data)
+    elif args is None or not all(hasattr(args, key) for key in ("box", "cls", "dfl")):
+        data = dict(defaults)
+        if args is not None and hasattr(args, "__dict__"):
+            data.update(vars(args))
+        model.args = SimpleNamespace(**data)
+
+    criterion = getattr(model, "criterion", None)
+    if criterion is None and hasattr(model, "init_criterion"):
+        try:
+            criterion = model.init_criterion()
+            model.criterion = criterion
+        except Exception:
+            criterion = getattr(model, "criterion", None)
+    hyp = getattr(criterion, "hyp", None)
+    if isinstance(hyp, Mapping):
+        data = dict(defaults)
+        data.update(dict(hyp))
+        criterion.hyp = SimpleNamespace(**data)
+    if criterion is not None:
+        try:
+            device = next(model.parameters()).device
+            if hasattr(criterion, "proj") and torch.is_tensor(criterion.proj):
+                criterion.proj = criterion.proj.to(device)
+        except StopIteration:
+            pass
+
+
 def supervised_yolo_loss(model: torch.nn.Module, batch: Dict[str, Any]) -> torch.Tensor:
     """Return Ultralytics DetectionModel supervised loss from a batch dict.
 
@@ -22,6 +71,7 @@ def supervised_yolo_loss(model: torch.nn.Module, batch: Dict[str, Any]) -> torch
     or a tuple whose first element is the scalar loss. This wrapper normalizes
     those variants and keeps a safe fallback for dry runs.
     """
+    _ensure_ultralytics_loss_hyp(model)
     out = model(batch)
     if torch.is_tensor(out):
         return out.mean()

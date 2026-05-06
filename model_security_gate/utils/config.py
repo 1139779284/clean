@@ -83,8 +83,20 @@ def split_known_keys(data: Mapping[str, Any], known: set[str]) -> tuple[dict[str
     return known_data, extra
 
 
+def _jsonable(value: Any) -> Any:
+    if is_dataclass(value):
+        return _jsonable(asdict(value))
+    if isinstance(value, Mapping):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
 def write_resolved_config(path: str | Path, config: Mapping[str, Any]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
-        json.dump(dict(config), f, ensure_ascii=False, indent=2)
+        json.dump(_jsonable(dict(config)), f, ensure_ascii=False, indent=2)

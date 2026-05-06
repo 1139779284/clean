@@ -214,7 +214,7 @@ def make_yolo_dataloader(
     imgsz: int = 640,
     batch_size: int = 8,
     shuffle: bool = True,
-    num_workers: int = 2,
+    num_workers: int = 0,
     max_images: Optional[int] = None,
     letterbox: bool = False,
 ) -> Tuple[DataLoader, YoloDatasetInfo]:
@@ -228,7 +228,7 @@ def make_yolo_dataloader(
         batch_size=int(batch_size),
         shuffle=bool(shuffle),
         num_workers=int(num_workers),
-        pin_memory=torch.cuda.is_available(),
+        pin_memory=torch.cuda.is_available() and int(num_workers) > 0,
         collate_fn=yolo_collate_fn,
         drop_last=False,
     )
