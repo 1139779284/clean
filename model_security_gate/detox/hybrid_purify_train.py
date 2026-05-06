@@ -59,6 +59,8 @@ class HybridPurifyConfig:
     external_eval_max_images_per_attack: int = 0
     external_replay_max_images_per_attack: int = 250
     external_oda_success_mode: str = "localized_any_recalled"
+    external_failure_replay: bool = True
+    external_failure_replay_repeat: int = 4
 
     # Phase schedule. Keep phases short; selection is external-ASR driven.
     phase_epochs: int = 2
@@ -89,6 +91,19 @@ class HybridPurifyConfig:
     trusted_teacher_required: bool = False
     evaluate_each_phase: bool = True
     rollback_bad_phase: bool = True
+    rollback_unimproved_phase: bool = False
+    external_select_phase_checkpoints: bool = True
+
+    # Aggressive-but-rollback mode: train harder on current failures, but only
+    # accept checkpoints that pass the external ASR / mAP / per-attack gates.
+    aggressive_mode: bool = False
+    aggressive_feature_epochs: int = 4
+    aggressive_phase_epochs: int = 2
+    aggressive_lr_multiplier: float = 2.0
+    aggressive_adv_steps: int = 4
+    aggressive_failure_replay_repeat: int = 8
+    aggressive_top_k_attacks_per_cycle: int = 2
+    defer_clean_recovery_in_aggressive: bool = True
 
     # Conservative RNP-lite soft-pruning. This is not a hard requirement for
     # acceptance; it is evaluated as a candidate and rolled back if external ASR
@@ -239,18 +254,37 @@ def _run_feature_purifier_phase(
     target_ids: Sequence[int],
     phase_name: str,
     cfg: HybridPurifyConfig,
-) -> Path:
+) -> Dict[str, Any]:
     weights = _phase_feature_weights(phase_name)
+    phase_low = phase_name.lower()
+    aggressive = bool(cfg.aggressive_mode and "clean" not in phase_low and "recovery" not in phase_low)
+    if aggressive:
+        weights = dict(weights)
+        weights["lambda_adv"] = max(float(weights.get("lambda_adv", 0.0)), 0.65)
+        weights["lambda_output_distill"] = min(float(weights.get("lambda_output_distill", 0.0)), 0.35)
+        weights["lambda_feature_distill"] = max(float(weights.get("lambda_feature_distill", 0.0)), 0.55)
+        weights["lambda_nad"] = max(float(weights.get("lambda_nad", 0.0)), 0.60)
+        if "oga" in phase_low or "semantic" in phase_low:
+            weights["lambda_proto_suppress"] = max(float(weights.get("lambda_proto_suppress", 0.0)), 1.20)
+        if "oda" in phase_low:
+            weights["lambda_task"] = max(float(weights.get("lambda_task", 0.0)), 1.80)
+            weights["lambda_attention"] = max(float(weights.get("lambda_attention", 0.0)), 0.55)
+            weights["lambda_prototype"] = max(float(weights.get("lambda_prototype", 0.0)), 1.10)
+            weights["lambda_proto_suppress"] = min(float(weights.get("lambda_proto_suppress", 0.0)), 0.05)
+    epochs = max(1, int(cfg.aggressive_feature_epochs if aggressive else cfg.feature_epochs))
+    lr = float(cfg.recovery_lr if "clean" in phase_low or "recovery" in phase_low else cfg.lr)
+    if aggressive:
+        lr *= float(cfg.aggressive_lr_multiplier)
     fcfg = FeatureStrongDetoxConfig(
         model=str(model),
         data_yaml=str(data_yaml),
         out_dir=str(out_dir),
         teacher_model=str(teacher_model) if teacher_model else None,
         trusted_teacher_required=bool(cfg.trusted_teacher_required),
-        epochs=max(1, int(cfg.feature_epochs)),
+        epochs=epochs,
         batch=int(cfg.batch),
         imgsz=int(cfg.imgsz),
-        lr=float(cfg.recovery_lr if "clean" in phase_name.lower() or "recovery" in phase_name.lower() else cfg.lr),
+        lr=lr,
         weight_decay=float(cfg.weight_decay),
         num_workers=int(cfg.num_workers),
         device=str(cfg.device) if cfg.device is not None else None,
@@ -260,10 +294,29 @@ def _run_feature_purifier_phase(
         max_hook_layers=int(cfg.max_hook_layers),
         prototype_max_batches=int(cfg.prototype_max_batches),
         target_class_ids=[int(x) for x in target_ids],
+        adv_steps=int(cfg.aggressive_adv_steps if aggressive else 2),
+        save_every=1 if cfg.external_select_phase_checkpoints else max(1, epochs),
         **weights,
     )
     report = run_strong_detox_training(fcfg)
-    return Path(report.get("best_model") or report.get("final_model"))
+    candidate_paths: List[Path] = []
+    for key in ["best_model", "final_model"]:
+        if report.get(key):
+            candidate_paths.append(Path(str(report[key])))
+    if cfg.external_select_phase_checkpoints:
+        candidate_paths.extend(sorted(Path(out_dir).glob("epoch_*.pt")))
+    unique: List[Path] = []
+    seen: set[str] = set()
+    for path in candidate_paths:
+        if not path.exists():
+            continue
+        key = str(path.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    primary = Path(report.get("final_model") or report.get("best_model") or unique[-1])
+    return {"primary_model": str(primary), "candidates": [str(path) for path in unique], "report": report, "aggressive": aggressive}
 
 
 def _run_clean_recovery_finetune(
@@ -575,14 +628,18 @@ def run_hybrid_purify_detox_yolo(
             external_replay_roots=tuple(replay_roots),
             external_eval_max_images_per_attack=cfg.external_eval_max_images_per_attack,
             external_replay_max_images_per_attack=cfg.external_replay_max_images_per_attack,
+            external_failure_replay=bool(cfg.external_failure_replay),
+            external_failure_replay_repeat=int(
+                cfg.aggressive_failure_replay_repeat if cfg.aggressive_mode else cfg.external_failure_replay_repeat
+            ),
             base_clean_repeat=cfg.base_clean_repeat,
             recovery_clean_repeat=cfg.recovery_clean_repeat,
             base_attack_repeat=cfg.base_attack_repeat,
             max_attack_repeat=cfg.max_attack_repeat,
             adaptive_boost=cfg.adaptive_boost,
             active_asr_threshold=cfg.active_asr_threshold,
-            top_k_attacks_per_cycle=cfg.top_k_attacks_per_cycle,
-            phase_epochs=cfg.phase_epochs,
+            top_k_attacks_per_cycle=int(cfg.aggressive_top_k_attacks_per_cycle if cfg.aggressive_mode else cfg.top_k_attacks_per_cycle),
+            phase_epochs=int(cfg.aggressive_phase_epochs if cfg.aggressive_mode else cfg.phase_epochs),
             recovery_epochs=cfg.recovery_epochs,
             lr0=cfg.lr,
             recovery_lr0=cfg.recovery_lr,
@@ -606,11 +663,12 @@ def run_hybrid_purify_detox_yolo(
                 target_ids=target_ids,
                 cfg=closed_cfg,
                 replay_datasets=replay_datasets,
+                failure_rows=accepted_external_rows,
             )
             phase_dir = output_dir / f"02_cycle_{cycle:02d}_phase_{pi:02d}_{phase.name}"
             phase_entry: Dict[str, Any] = {"phase": asdict(phase), "data_yaml": str(phase_yaml), "evaluations": []}
             if cfg.run_feature_purifier:
-                current_model = _run_feature_purifier_phase(
+                feature_result = _run_feature_purifier_phase(
                     model=current_model,
                     teacher_model=teacher_model,
                     data_yaml=phase_yaml,
@@ -619,35 +677,57 @@ def run_hybrid_purify_detox_yolo(
                     phase_name=phase.name,
                     cfg=cfg,
                 )
+                phase_entry["feature_purifier"] = {
+                    "primary_model": feature_result.get("primary_model"),
+                    "candidates": feature_result.get("candidates", []),
+                    "aggressive": feature_result.get("aggressive"),
+                }
+                current_model = Path(str(feature_result.get("primary_model")))
                 phase_entry["model_after_feature"] = str(current_model)
                 if cfg.evaluate_each_phase:
-                    feature_item = evaluate_candidate(
-                        Path(current_model),
-                        tag=f"cycle_{cycle:02d}_phase_{pi:02d}_{phase.name}_feature",
-                        cycle_info={
-                            "cycle": cycle,
-                            "phase": asdict(phase),
-                            "phase_index": pi,
-                            "stage": "feature_purify",
-                        },
-                    )
-                    feature_item["cycle"] = cycle
-                    feature_item["phase_index"] = pi
-                    feature_item["stage"] = "feature_purify"
-                    feature_evals = feature_item.pop("_evals")
-                    public_feature, accepted, should_rollback = consider_candidate(
-                        feature_item,
-                        feature_evals,
-                        rollback_on_blocked=bool(cfg.rollback_bad_phase),
-                        rollback_on_no_improvement=False,
-                    )
-                    phase_entry["evaluations"].append(public_feature)
-                    if should_rollback:
+                    accepted_in_phase = False
+                    rollback_in_phase = False
+                    candidates = [Path(str(p)) for p in feature_result.get("candidates", [])]
+                    if not candidates:
+                        candidates = [Path(current_model)]
+                    for ci, candidate in enumerate(candidates, 1):
+                        feature_item = evaluate_candidate(
+                            Path(candidate),
+                            tag=f"cycle_{cycle:02d}_phase_{pi:02d}_{phase.name}_feature_c{ci:02d}_{candidate.stem}",
+                            cycle_info={
+                                "cycle": cycle,
+                                "phase": asdict(phase),
+                                "phase_index": pi,
+                                "stage": "feature_purify",
+                                "candidate_index": ci,
+                                "candidate_name": candidate.name,
+                            },
+                        )
+                        feature_item["cycle"] = cycle
+                        feature_item["phase_index"] = pi
+                        feature_item["stage"] = "feature_purify"
+                        feature_item["candidate_index"] = ci
+                        feature_item["candidate_name"] = candidate.name
+                        feature_evals = feature_item.pop("_evals")
+                        public_feature, accepted, should_rollback = consider_candidate(
+                            feature_item,
+                            feature_evals,
+                            rollback_on_blocked=bool(cfg.rollback_bad_phase),
+                            rollback_on_no_improvement=bool(cfg.rollback_unimproved_phase),
+                        )
+                        phase_entry["evaluations"].append(public_feature)
+                        accepted_in_phase = accepted_in_phase or accepted
+                        rollback_in_phase = rollback_in_phase or should_rollback
+                        if accepted and public_feature.get("passes") and cfg.stop_on_pass:
+                            stop_after_phase = True
+                    if accepted_in_phase or rollback_in_phase or bool(cfg.rollback_unimproved_phase):
                         current_model = accepted_model
-                        phase_entry["model_after_feature_rollback"] = str(current_model)
-                    if accepted and public_feature.get("passes") and cfg.stop_on_pass:
-                        stop_after_phase = True
-            if cfg.run_clean_recovery_finetune and ("recovery" in phase.name or "clean_anchor" in phase.name):
+                        phase_entry["model_after_feature_selected"] = str(current_model)
+            run_recovery_now = cfg.run_clean_recovery_finetune and ("recovery" in phase.name or "clean_anchor" in phase.name)
+            if cfg.aggressive_mode and cfg.defer_clean_recovery_in_aggressive and phase.name == "clean_anchor":
+                run_recovery_now = False
+                phase_entry["clean_recovery_skipped"] = "deferred_by_aggressive_mode"
+            if run_recovery_now:
                 current_model = _run_clean_recovery_finetune(
                     model=current_model,
                     data_yaml=phase_yaml,

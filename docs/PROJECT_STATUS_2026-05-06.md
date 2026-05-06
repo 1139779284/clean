@@ -12,6 +12,40 @@ This branch contains the current experimental hardening line for YOLO backdoor d
 
 ## Current Experimental Result
 
+Latest failure-focused replay / aggressive rollback smoke:
+
+```text
+D:\clean_yolo\model_security_gate\runs\universal_v2_probe_best2_2026-05-06\detox_small_failure_replay_aggressive_retry1
+```
+
+This run validates the newest training-loop fixes:
+
+- external success rows are replayed preferentially instead of replaying generic attack samples;
+- failure rows can be matched by basename across replay/eval roots;
+- failure replay can be repeated per sample;
+- feature-purifier epoch checkpoints are exposed to external-ASR selection;
+- aggressive phases can train harder while rollback prevents regressions.
+
+The result improved the small held-out external suite, but still does **not** meet the safety target:
+
+```text
+external max ASR:  0.875 -> 0.775
+external mean ASR: 0.5875 -> 0.4125
+mAP50-95 drop:     0.0129
+per-attack worse:  0
+```
+
+Per-attack movement:
+
+```text
+badnet_oda:                 0.875 -> 0.775
+blend_oga:                  0.275 -> 0.075
+semantic_green_cleanlabel:  0.500 -> 0.325
+wanet_oga:                  0.700 -> 0.475
+```
+
+Conclusion: the loop is now better targeted than the previous `0.875 -> 0.800` run, but it is still far from effective detox (`external_max_asr <= 0.10`). The dominant blocker is still ODA-style target disappearance; replay alone is not enough and the next algorithmic step should add an ODA-specific recall-preserving detection/feature loss.
+
 The latest local CUDA validation smoke is:
 
 ```text
@@ -36,6 +70,9 @@ The audit found an important ASR-definition ambiguity rather than a class-map in
 - Phase ordering is now driven by external ASR, so the highest-ASR group runs first instead of always running OGA first.
 - Rollback state uses the last accepted external hard-suite rows/scores, avoiding contamination from a rejected candidate.
 - Hard replay can use failure-only external samples and trigger-preserving augmentation settings.
+- Failure-only replay now uses current `success=true` external rows, supports basename matching across suite copies, and can repeat failures for aggressive phases.
+- Hybrid-PURIFY feature phases can expose epoch/final checkpoints so the outer loop can select by external ASR rather than only supervised loss.
+- Aggressive-but-rollback mode trains harder on the top external failures while rejecting candidates that worsen any tracked attack.
 - Model/data/runtime artifacts remain ignored by default; only explicitly tracked sample models are allowed.
 
 ## Known Gaps
@@ -44,6 +81,7 @@ The audit found an important ASR-definition ambiguity rather than a class-map in
 - Without a trusted clean teacher checkpoint, feature-level distillation falls back to a frozen suspicious model and should be treated only as risk reduction.
 - External ASR validation must use held-out suites where possible; using the same suite for replay and evaluation can overstate robustness.
 - The current ASR target is still unmet: `external_max_asr <= 0.10` and clean `mAP50-95` drop `<= 0.03`.
+- ODA hardening remains the most difficult failure mode. Current failure replay reduces it slightly but does not suppress it enough.
 - GitHub CI is CPU/static-test oriented; real YOLO/CUDA detox runs must be validated locally.
 - Full datasets, run directories, and large transient model artifacts are intentionally not committed.
 - ODA ASR must be reported with its explicit success mode. Do not compare old runs unless `oda_success_mode` is the same.

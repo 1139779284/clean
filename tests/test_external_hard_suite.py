@@ -160,9 +160,38 @@ def test_failure_only_replay_copies_only_success_rows(tmp_path: Path):
             {"image": str(passed_img), "attack": "badnet_oga", "success": False},
         ],
         failure_only=True,
+        repeat=2,
+    )
+
+    copied = sorted((out / "images" / "train").glob("*.jpg"))
+    assert stats["added"] == 2
+    assert stats["repeat"] == 2
+    assert len(copied) == 2
+    assert "failed" in copied[0].name
+
+
+def test_failure_only_replay_can_match_by_basename_across_roots(tmp_path: Path):
+    replay_root = tmp_path / "replay"
+    eval_root = tmp_path / "eval"
+    replay_img = replay_root / "data" / "badnet_oga" / "images" / "val" / "shared.jpg"
+    replay_lab = replay_root / "data" / "badnet_oga" / "labels" / "val" / "shared.txt"
+    eval_img = eval_root / "data" / "badnet_oga" / "images" / "val" / "shared.jpg"
+    _write_img(replay_img)
+    replay_lab.parent.mkdir(parents=True, exist_ok=True)
+    replay_lab.write_text("", encoding="utf-8")
+
+    datasets = discover_external_attack_datasets([replay_root])
+    out = tmp_path / "detox_ds"
+    stats = append_external_replay_samples(
+        output_dataset_dir=out,
+        attack_datasets=datasets,
+        target_class_ids=[0],
+        selected_attack_names=["badnet_oga"],
+        failure_rows=[{"image": str(eval_img), "attack": "badnet_oga", "success": True}],
+        failure_only=True,
     )
 
     copied = sorted((out / "images" / "train").glob("*.jpg"))
     assert stats["added"] == 1
     assert len(copied) == 1
-    assert "failed" in copied[0].name
+    assert "shared" in copied[0].name

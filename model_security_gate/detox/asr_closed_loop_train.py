@@ -76,6 +76,8 @@ class ASRClosedLoopConfig:
     include_internal_asr: bool = True
     use_external_replay: bool = True
     stop_on_pass: bool = True
+    external_failure_replay: bool = True
+    external_failure_replay_repeat: int = 4
 
 
 def _eval_clean_yolo(model_path: str | Path, data_yaml: str | Path, imgsz: int, batch: int, device: str | int | None = None) -> Dict[str, Any] | None:
@@ -242,6 +244,7 @@ def _build_phase_dataset(
     target_ids: Sequence[int],
     cfg: ASRClosedLoopConfig,
     replay_datasets: Sequence[ExternalAttackDataset],
+    failure_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> Path:
     phase_dir = output_dir / f"01_cycle_{cycle:02d}_{phase.name}_dataset"
     yaml_path = build_asr_aware_yolo_dataset(
@@ -270,6 +273,9 @@ def _build_phase_dataset(
             max_images_per_attack=int(cfg.external_replay_max_images_per_attack),
             split="train",
             seed=cfg.seed + cycle,
+            failure_rows=failure_rows,
+            failure_only=bool(cfg.external_failure_replay),
+            repeat=max(1, int(cfg.external_failure_replay_repeat if cfg.external_failure_replay else 1)),
         )
     write_json(phase_dir / "phase_manifest.json", {"phase": asdict(phase), "replay_stats": replay_stats, "data_yaml": str(yaml_path)})
     return yaml_path
@@ -380,7 +386,18 @@ def run_asr_closed_loop_detox_yolo(
         phases = _build_phase_plan(cfg.attack_specs, hard_scores, cfg)
         cycle_record: Dict[str, Any] = {"cycle": cycle, "phases": [asdict(p) for p in phases]}
         for phase_idx, phase in enumerate(phases, 1):
-            phase_yaml = _build_phase_dataset(phase, cycle, output_dir, images_dir, labels_dir, names, target_ids, cfg, replay_datasets)
+            phase_yaml = _build_phase_dataset(
+                phase,
+                cycle,
+                output_dir,
+                images_dir,
+                labels_dir,
+                names,
+                target_ids,
+                cfg,
+                replay_datasets,
+                failure_rows=(pre_eval.get("external") or {}).get("rows"),
+            )
             project = output_dir / f"02_cycle_{cycle:02d}_phase_{phase_idx:02d}_{phase.name}_train"
             train_kwargs = dict(phase.train_kwargs)
             train_counterfactual_finetune(

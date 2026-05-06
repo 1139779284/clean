@@ -28,6 +28,8 @@ def test_phase_level_selection_defaults_are_safe():
     cfg = HybridPurifyConfig()
     assert cfg.evaluate_each_phase is True
     assert cfg.rollback_bad_phase is True
+    assert cfg.external_failure_replay is True
+    assert cfg.external_select_phase_checkpoints is True
 
 
 def test_attack_score_matching_keeps_oga_and_oda_separate():

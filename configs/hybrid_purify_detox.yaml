@@ -20,6 +20,8 @@ hybrid_purify_detox:
   max_map_drop: 0.03
   external_eval_max_images_per_attack: 0
   external_replay_max_images_per_attack: 250
+  external_failure_replay: true
+  external_failure_replay_repeat: 4
   # ODA ASR definition:
   # - localized_any_recalled: success if no GT target is spatially recalled
   # - class_presence: success only if no target-class detection exists
@@ -32,6 +34,16 @@ hybrid_purify_detox:
   # worsens blend/semantic/ODA ASR.
   evaluate_each_phase: true
   rollback_bad_phase: true
+  rollback_unimproved_phase: false
+  external_select_phase_checkpoints: true
+  aggressive_mode: false
+  aggressive_feature_epochs: 4
+  aggressive_phase_epochs: 2
+  aggressive_lr_multiplier: 2.0
+  aggressive_adv_steps: 4
+  aggressive_failure_replay_repeat: 8
+  aggressive_top_k_attacks_per_cycle: 2
+  defer_clean_recovery_in_aggressive: true
   trusted_teacher_required: false
   amp: false
   # RNP-lite soft suppression is evaluated as a candidate and rolled back if it

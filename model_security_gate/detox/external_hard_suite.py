@@ -418,6 +418,28 @@ def _failure_paths(failure_rows: Sequence[Mapping[str, Any]] | None) -> set[str]
     return paths
 
 
+def _failure_basenames(failure_rows: Sequence[Mapping[str, Any]] | None) -> set[str]:
+    names: set[str] = set()
+    for row in failure_rows or []:
+        if not _truthy(row.get("success")):
+            continue
+        image = row.get("image") or row.get("image_basename")
+        if image:
+            names.add(Path(str(image)).name)
+    return names
+
+
+def _failure_attacks(failure_rows: Sequence[Mapping[str, Any]] | None) -> set[str]:
+    attacks: set[str] = set()
+    for row in failure_rows or []:
+        if not _truthy(row.get("success")):
+            continue
+        attack = row.get("attack")
+        if attack:
+            attacks.add(str(attack).lower())
+    return attacks
+
+
 def append_external_replay_samples(
     output_dataset_dir: str | Path,
     attack_datasets: Sequence[ExternalAttackDataset],
@@ -428,6 +450,7 @@ def append_external_replay_samples(
     seed: int = 42,
     failure_rows: Sequence[Mapping[str, Any]] | None = None,
     failure_only: bool = False,
+    repeat: int = 1,
 ) -> Dict[str, Any]:
     """Append existing hard-suite images to an ASR-aware YOLO training dataset.
 
@@ -443,12 +466,17 @@ def append_external_replay_samples(
     lab_out.mkdir(parents=True, exist_ok=True)
     target_ids = [int(x) for x in target_class_ids]
     failed_paths = _failure_paths(failure_rows)
+    failed_basenames = _failure_basenames(failure_rows)
+    failed_attacks = _failure_attacks(failure_rows)
     stats: Dict[str, Any] = {
         "added": 0,
         "skipped": 0,
         "by_attack": {},
         "failure_only": bool(failure_only),
         "n_failure_paths": len(failed_paths),
+        "n_failure_basenames": len(failed_basenames),
+        "n_failure_attacks": len(failed_attacks),
+        "repeat": max(1, int(repeat)),
     }
     if failure_only and not failed_paths:
         stats["warning"] = "failure_only_requested_but_no_failure_rows"
@@ -460,7 +488,11 @@ def append_external_replay_samples(
         goal = infer_attack_goal(ds.name if ds.goal == "auto" else ds.goal)
         paths = _iter_attack_paths(ds, 0)
         if failure_only:
-            paths = [path for path in paths if str(path.resolve()) in failed_paths]
+            original_paths = list(paths)
+            paths = [path for path in paths if str(path.resolve()) in failed_paths or path.name in failed_basenames]
+            if not paths and ds.name.lower() in failed_attacks:
+                paths = original_paths
+                stats.setdefault("fallback_by_attack", []).append(ds.name)
         if max_images_per_attack and max_images_per_attack > 0 and len(paths) > max_images_per_attack:
             idx = rng.choice(len(paths), size=max_images_per_attack, replace=False)
             paths = [paths[int(i)] for i in sorted(idx.tolist())]
@@ -474,14 +506,15 @@ def append_external_replay_samples(
             if goal == "oda" and not has_t:
                 stats["skipped"] += 1
                 continue
-            stem = f"external_{ds.suite or 'suite'}_{ds.name}_{path.stem}".replace(" ", "_")
-            dest_img = img_out / f"{stem}{path.suffix.lower() if path.suffix else '.jpg'}"
-            dest_lab = lab_out / f"{stem}.txt"
-            try:
-                shutil.copy2(path, dest_img)
-            except OSError:
-                write_image(dest_img, img)
-            write_yolo_labels(dest_lab, labels, img.shape)
-            stats["added"] += 1
-            stats["by_attack"][ds.name] = int(stats["by_attack"].get(ds.name, 0)) + 1
+            for rep in range(max(1, int(repeat))):
+                stem = f"external_{ds.suite or 'suite'}_{ds.name}_{path.stem}_r{rep:02d}".replace(" ", "_")
+                dest_img = img_out / f"{stem}{path.suffix.lower() if path.suffix else '.jpg'}"
+                dest_lab = lab_out / f"{stem}.txt"
+                try:
+                    shutil.copy2(path, dest_img)
+                except OSError:
+                    write_image(dest_img, img)
+                write_yolo_labels(dest_lab, labels, img.shape)
+                stats["added"] += 1
+                stats["by_attack"][ds.name] = int(stats["by_attack"].get(ds.name, 0)) + 1
     return stats
