@@ -94,6 +94,68 @@ attacks as alpha increases. The tool is still valuable, but the next merge
 search should use a genuinely external-low-ASR source checkpoint rather than an
 internal-regression-low checkpoint.
 
+A second Pareto search used the actually external-low-ASR line:
+
+```text
+base/balanced:
+  D:\clean_yolo\model_security_gate\runs\hard_regression_balanced_train_2026-05-05\hard_regression_balanced_best2\weights\best.pt
+
+source/strong:
+  D:\clean_yolo\model_security_gate\runs\hard_regression_train_2026-05-05\hard_regression_best2\weights\best.pt
+```
+
+Full-model interpolation confirmed the core trade-off. With
+`poison_benchmark_cuda_tuned` at 60 images per attack, alpha `0.85–0.90`
+reduced external mean ASR to `0.075–0.0875`, but external max ASR stayed stuck
+at `0.2167` because `badnet_oda` remained the top attack. Clean `mAP50-95`
+also stayed low around `0.177–0.179`, so this is not an acceptable production
+candidate.
+
+Layer-wise interpolation was then tested. The best max-ASR candidate was:
+
+```text
+C_neck_head_mid:
+  layer spec: 0-9:0.2,10-21:0.65,22-999:0.65
+  external max ASR: 0.25
+  external mean ASR: 0.1625
+  clean mAP50-95: 0.2031
+```
+
+The best clean candidate among the refined layer merge set was:
+
+```text
+A3_head_mid:
+  layer spec: 0-9:0.1,10-21:0.3,22-999:0.7
+  external max ASR: 0.2833
+  external mean ASR: 0.1417
+  clean mAP50-95: 0.2407
+```
+
+These results show that Pareto/layer merge is useful diagnostically and can
+move the model along the ASR/mAP frontier, but merge alone does not reach the
+target `external_max_asr <= 0.10`.
+
+Two targeted repair smokes were run from the `A3_head_mid` merge candidate:
+
+```text
+D:\clean_yolo\model_security_gate\runs\targeted_repair_A3_tiny_2026-05-07
+D:\clean_yolo\model_security_gate\runs\targeted_repair_A3_phaseft_smoke_2026-05-07
+```
+
+The first smoke showed that self-teacher feature purification is unsafe when no
+trusted clean teacher is available: candidate external max ASR jumped to
+`0.73–0.97` and all candidates were correctly rolled back. The code now disables
+feature purification by default when `teacher_model` is missing, unless
+`--allow-self-teacher-feature-purifier` is explicitly passed.
+
+The second smoke used failure-only YOLO phase fine-tuning as the no-teacher
+fallback. It also failed to improve: phase candidates reached external max ASR
+`0.83–0.90` and were rolled back. This demonstrates that standard YOLO
+fine-tuning on replayed failures tends to recover normal detection behavior but
+also revives OGA/semantic trigger sensitivity. The next algorithmic step should
+therefore be a custom matched-candidate ODA/OGA loss rather than more ordinary
+fine-tuning.
+
 The latest local CUDA validation smoke is:
 
 ```text
@@ -127,6 +189,8 @@ The audit found an important ASR-definition ambiguity rather than a class-map in
 
 - Hybrid-PURIFY-OD now has compile/test coverage and a completed small CUDA smoke on `best 2.pt`, but it has not yet completed a full CUDA optimization run.
 - Without a trusted clean teacher checkpoint, feature-level distillation falls back to a frozen suspicious model and should be treated only as risk reduction.
+- As of the latest code, Hybrid-PURIFY disables self-teacher feature purification by default when no trusted teacher is provided.
+- Failure-only phase fine-tuning is available as a no-teacher fallback, but the current smoke shows it can recover mAP while worsening ASR and should be treated as experimental.
 - External ASR validation must use held-out suites where possible; using the same suite for replay and evaluation can overstate robustness.
 - The current ASR target is still unmet: `external_max_asr <= 0.10` and clean `mAP50-95` drop `<= 0.03`.
 - ODA hardening remains the most difficult failure mode. Current failure replay reduces it slightly but does not suppress it enough.
@@ -137,17 +201,16 @@ The audit found an important ASR-definition ambiguity rather than a class-map in
 
 ## Recommended Next Steps
 
-1. Run a longer Hybrid-PURIFY-OD experiment with the conservative ODA-recall defaults and a trusted clean teacher if available.
-2. Run Pareto full-model interpolation with:
-   - base/balanced checkpoint: highest clean mAP candidate;
-   - source/strong checkpoint: lowest held-out external ASR candidate, not merely lowest internal ASR candidate;
-   - held-out external hard suite for selection.
-3. If full-model interpolation finds a promising point, run only failure-only targeted repair on the remaining top attack.
-4. If `badnet_oda` remains high, replace the current confidence-floor loss with a matched decoded-candidate BCE/distillation loss or integrate the recall-preserving term closer to YOLO assignment-level training.
-3. Prefer split hard suites:
+1. Prioritize a custom matched-candidate ODA/OGA repair loss:
+   - ODA positives: match decoded candidates near each GT target and optimize class/objectness/box recall.
+   - OGA negatives: suppress target-class candidates only on target-absent failure samples.
+   - Avoid global target-class suppression.
+2. Use the current Pareto/layer merge candidates only as initialization points, not as accepted purified models.
+3. Run feature-level purification only with a trusted clean teacher, or explicitly opt into the weaker self-teacher mode for experiments.
+4. Prefer split hard suites:
    - replay/train: `poison_benchmark_cuda_large`
    - held-out eval/selection: `poison_benchmark_cuda_tuned`
-4. Accept a model only if:
+5. Accept a model only if:
    - external max ASR `<= 0.10`
    - external mean ASR ideally `<= 0.05–0.08`
    - clean `mAP50-95` drop `<= 0.03`

@@ -87,6 +87,8 @@ class HybridPurifyConfig:
     include_internal_asr: bool = True
     stop_on_pass: bool = True
     run_feature_purifier: bool = True
+    allow_self_teacher_feature_purifier: bool = False
+    run_phase_finetune: bool = True
     run_clean_recovery_finetune: bool = True
     trusted_teacher_required: bool = False
     evaluate_each_phase: bool = True
@@ -370,6 +372,56 @@ def _run_clean_recovery_finetune(
     return find_ultralytics_weight(out_project, "clean_recovery", prefer="best")
 
 
+def _run_phase_finetune(
+    model: str | Path,
+    data_yaml: str | Path,
+    out_project: str | Path,
+    cfg: HybridPurifyConfig,
+    phase_name: str,
+    epochs: int | None = None,
+) -> List[Path]:
+    """Run a supervised YOLO fine-tune on the current hardening phase dataset.
+
+    This is the safe fallback when no trusted clean teacher is available. The
+    phase dataset already contains failure-only external replay samples, and the
+    outer loop still decides by external ASR / clean mAP rather than train loss.
+    """
+    train_counterfactual_finetune(
+        base_model=model,
+        data_yaml=data_yaml,
+        output_project=out_project,
+        name="phase_finetune",
+        imgsz=cfg.imgsz,
+        epochs=max(1, int(epochs if epochs is not None else cfg.phase_epochs)),
+        batch=cfg.batch,
+        device=cfg.device,
+        lr0=float(cfg.lr) * float(cfg.aggressive_lr_multiplier if cfg.aggressive_mode else 1.0),
+        weight_decay=cfg.weight_decay,
+        mosaic=0.25 if "oda" in phase_name else 0.45,
+        mixup=0.03 if "oda" in phase_name else 0.08,
+        copy_paste=0.02,
+        erasing=0.08 if "oda" in phase_name else 0.18,
+        hsv_h=0.02,
+        hsv_s=0.35,
+        hsv_v=0.30,
+        label_smoothing=0.01 if "oda" in phase_name else 0.03,
+        close_mosaic=1,
+        workers=cfg.num_workers,
+    )
+    weights_dir = Path(out_project) / "phase_finetune" / "weights"
+    candidates: List[Path] = []
+    for prefer in ("best", "last"):
+        try:
+            path = find_ultralytics_weight(out_project, "phase_finetune", prefer=prefer)
+        except FileNotFoundError:
+            continue
+        if path.exists() and path not in candidates:
+            candidates.append(path)
+    if not candidates and weights_dir.exists():
+        candidates.extend(sorted(weights_dir.glob("*.pt")))
+    return candidates
+
+
 def _passes(best: Mapping[str, Any], cfg: HybridPurifyConfig) -> bool:
     if float(best.get("external_max_asr", 0.0)) > float(cfg.max_allowed_external_asr):
         return False
@@ -442,8 +494,16 @@ def run_hybrid_purify_detox_yolo(
         "status": "running",
         "warnings": [],
     }
+    feature_purifier_enabled = bool(cfg.run_feature_purifier)
     if not teacher_model:
-        manifest["warnings"].append("teacher_model not provided; feature distillation uses a frozen copy of the suspicious model, which is weaker.")
+        if bool(cfg.run_feature_purifier) and not bool(cfg.allow_self_teacher_feature_purifier):
+            feature_purifier_enabled = False
+            manifest["warnings"].append(
+                "teacher_model not provided; feature purifier disabled to avoid self-teacher backdoor distillation. "
+                "Using failure-only phase fine-tune fallback."
+            )
+        else:
+            manifest["warnings"].append("teacher_model not provided; feature distillation uses a frozen copy of the suspicious model, which is weaker.")
     if not eval_roots:
         manifest["warnings"].append("No external_eval_roots provided; Hybrid-PURIFY will rely on internal ASR and is not a reliable external-hard-suite solution.")
     write_json(output_dir / "hybrid_purify_manifest.json", manifest)
@@ -687,7 +747,7 @@ def run_hybrid_purify_detox_yolo(
             )
             phase_dir = output_dir / f"02_cycle_{cycle:02d}_phase_{pi:02d}_{phase.name}"
             phase_entry: Dict[str, Any] = {"phase": asdict(phase), "data_yaml": str(phase_yaml), "evaluations": []}
-            if cfg.run_feature_purifier:
+            if feature_purifier_enabled:
                 feature_result = _run_feature_purifier_phase(
                     model=current_model,
                     teacher_model=teacher_model,
@@ -743,6 +803,55 @@ def run_hybrid_purify_detox_yolo(
                     if accepted_in_phase or rollback_in_phase or bool(cfg.rollback_unimproved_phase):
                         current_model = accepted_model
                         phase_entry["model_after_feature_selected"] = str(current_model)
+            run_phase_finetune_now = bool(cfg.run_phase_finetune) and any(
+                token in phase.name for token in ("oga", "oda", "semantic", "wanet", "hardening")
+            )
+            if run_phase_finetune_now:
+                phase_ft_dir = phase_dir / "ultralytics_phase_finetune"
+                phase_candidates = _run_phase_finetune(
+                    model=current_model,
+                    data_yaml=phase_yaml,
+                    out_project=phase_ft_dir,
+                    cfg=cfg,
+                    phase_name=phase.name,
+                    epochs=phase.epochs,
+                )
+                phase_entry["phase_finetune"] = {"candidates": [str(p) for p in phase_candidates]}
+                if cfg.evaluate_each_phase:
+                    accepted_in_phase = False
+                    rollback_in_phase = False
+                    for ci, candidate in enumerate(phase_candidates, 1):
+                        phase_item = evaluate_candidate(
+                            Path(candidate),
+                            tag=f"cycle_{cycle:02d}_phase_{pi:02d}_{phase.name}_phaseft_c{ci:02d}_{candidate.stem}",
+                            cycle_info={
+                                "cycle": cycle,
+                                "phase": asdict(phase),
+                                "phase_index": pi,
+                                "stage": "phase_finetune",
+                                "candidate_index": ci,
+                                "candidate_name": candidate.name,
+                            },
+                        )
+                        phase_item["cycle"] = cycle
+                        phase_item["phase_index"] = pi
+                        phase_item["stage"] = "phase_finetune"
+                        phase_item["candidate_index"] = ci
+                        phase_item["candidate_name"] = candidate.name
+                        phase_evals = phase_item.pop("_evals")
+                        public_phase, accepted, should_rollback = consider_candidate(
+                            phase_item,
+                            phase_evals,
+                            rollback_on_blocked=bool(cfg.rollback_bad_phase),
+                            rollback_on_no_improvement=True,
+                        )
+                        phase_entry["evaluations"].append(public_phase)
+                        accepted_in_phase = accepted_in_phase or accepted
+                        rollback_in_phase = rollback_in_phase or should_rollback
+                        if accepted and public_phase.get("passes") and cfg.stop_on_pass:
+                            stop_after_phase = True
+                    current_model = accepted_model
+                    phase_entry["model_after_phase_finetune_selected"] = str(current_model)
             run_recovery_now = cfg.run_clean_recovery_finetune and ("recovery" in phase.name or "clean_anchor" in phase.name)
             if cfg.aggressive_mode and cfg.defer_clean_recovery_in_aggressive and phase.name == "clean_anchor":
                 run_recovery_now = False

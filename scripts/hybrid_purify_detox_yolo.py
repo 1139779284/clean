@@ -45,6 +45,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-images", type=int, default=None)
     p.add_argument("--eval-max-images", type=int, default=None)
     p.add_argument("--no-feature-purifier", action="store_true", default=None)
+    p.add_argument("--allow-self-teacher-feature-purifier", action="store_true", default=None)
+    p.add_argument("--no-phase-finetune", action="store_true", default=None)
     p.add_argument("--no-clean-recovery-finetune", action="store_true", default=None)
     p.add_argument("--no-evaluate-each-phase", action="store_true", default=None, help="Disable phase-level external ASR checkpoint selection")
     p.add_argument("--no-rollback-bad-phase", action="store_true", default=None, help="Continue from a phase even if it worsens an external attack")
@@ -93,6 +95,8 @@ def _resolved(args: argparse.Namespace) -> dict:
     cli = namespace_overrides(args, exclude={"config"})
     bool_map = {
         "no_feature_purifier": ("run_feature_purifier", False),
+        "allow_self_teacher_feature_purifier": ("allow_self_teacher_feature_purifier", True),
+        "no_phase_finetune": ("run_phase_finetune", False),
         "no_clean_recovery_finetune": ("run_clean_recovery_finetune", False),
         "no_evaluate_each_phase": ("evaluate_each_phase", False),
         "no_rollback_bad_phase": ("rollback_bad_phase", False),
