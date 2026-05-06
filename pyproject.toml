@@ -64,6 +64,7 @@ asr-closed-loop-detox-yolo = "python scripts/asr_closed_loop_detox_yolo.py"
 run-external-hard-suite = "python scripts/run_external_hard_suite.py"
 hybrid-purify-detox-yolo = "python scripts/hybrid_purify_detox_yolo.py"
 rnp-prune-yolo = "python scripts/rnp_prune_yolo.py"
+pareto-merge-yolo = "python scripts/pareto_merge_yolo.py"
 pytest = "python -m pytest -q"
 ci-smoke = "python -m compileall -q model_security_gate scripts tests && python -m pytest -q"
 

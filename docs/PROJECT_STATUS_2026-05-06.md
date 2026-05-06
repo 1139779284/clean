@@ -64,6 +64,36 @@ badnet_oda:        0.875 -> 0.800
 
 The ODA recall loss is active and non-zero in the ODA phase, but the scaled variant was worse than the steadier v2 configuration. Defaults therefore stay conservative (`aggressive_lambda_oda_recall=2.0`, `oda_recall_loss_scale=1.0`) while keeping the knobs exposed for follow-up experiments.
 
+New direction after the ODA-loss smoke: Pareto-Merge + Targeted Repair. The
+project now includes `scripts/pareto_merge_yolo.py`, which interpolates a
+mAP-preserving checkpoint with an ASR-suppressing checkpoint and can optionally
+evaluate each alpha on clean mAP and the external hard suite. This is intended
+to test whether an existing low-ASR direction can be combined with a higher-mAP
+checkpoint before doing any further targeted replay training.
+
+Initial Pareto-Merge smoke:
+
+```text
+D:\clean_yolo\model_security_gate\runs\pareto_merge_external_tiny_2026-05-07
+
+base:   D:\clean_yolo\best 2.pt
+source: D:\clean_yolo\model_security_gate\runs\asr_aware_detox_best2_large_fix_2026-05-05\02_cycle_01_train\asr_aware\weights\best.pt
+suite:  poison_benchmark_cuda_tuned, max 20 images per attack
+
+alpha  max_ASR  mean_ASR  badnet_oda  blend_oga  semantic  wanet
+0.00   0.95     0.55      0.95        0.25       0.40      0.60
+0.25   0.85     0.675     0.85        0.65       0.60      0.60
+0.50   0.90     0.7875    0.80        0.90       0.75      0.70
+0.75   0.95     0.8375    0.90        0.95       0.85      0.65
+1.00   0.90     0.825     0.90        0.90       0.80      0.70
+```
+
+This specific merge pair is not useful for external ASR: the internally low-ASR
+source does not transfer to the external hard suite and worsens OGA/semantic
+attacks as alpha increases. The tool is still valuable, but the next merge
+search should use a genuinely external-low-ASR source checkpoint rather than an
+internal-regression-low checkpoint.
+
 The latest local CUDA validation smoke is:
 
 ```text
@@ -108,7 +138,12 @@ The audit found an important ASR-definition ambiguity rather than a class-map in
 ## Recommended Next Steps
 
 1. Run a longer Hybrid-PURIFY-OD experiment with the conservative ODA-recall defaults and a trusted clean teacher if available.
-2. If `badnet_oda` remains high, replace the current confidence-floor loss with a matched decoded-candidate BCE/distillation loss or integrate the recall-preserving term closer to YOLO assignment-level training.
+2. Run Pareto full-model interpolation with:
+   - base/balanced checkpoint: highest clean mAP candidate;
+   - source/strong checkpoint: lowest held-out external ASR candidate, not merely lowest internal ASR candidate;
+   - held-out external hard suite for selection.
+3. If full-model interpolation finds a promising point, run only failure-only targeted repair on the remaining top attack.
+4. If `badnet_oda` remains high, replace the current confidence-floor loss with a matched decoded-candidate BCE/distillation loss or integrate the recall-preserving term closer to YOLO assignment-level training.
 3. Prefer split hard suites:
    - replay/train: `poison_benchmark_cuda_large`
    - held-out eval/selection: `poison_benchmark_cuda_tuned`
