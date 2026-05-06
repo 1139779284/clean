@@ -28,8 +28,9 @@ class RNPConfig:
     max_channels_per_layer: int = 256
     unlearn_steps: int = 40
     lr: float = 0.04
-    gate_l1: float = 0.002
+    gate_l1: float = 0.05
     gate_floor: float = 0.05
+    gate_init: float = 0.999
     score_top_k: int = 96
     soft_suppression_strength: float = 0.70
     min_score_to_prune: float = 0.03
@@ -92,7 +93,14 @@ def _make_loader(data_yaml: str | Path, cfg: RNPConfig):
 
 
 class _GateHook:
-    def __init__(self, module, layer_name: str, max_channels: int | None = None, gate_floor: float = 0.05):
+    def __init__(
+        self,
+        module,
+        layer_name: str,
+        max_channels: int | None = None,
+        gate_floor: float = 0.05,
+        gate_init: float = 0.999,
+    ):
         import torch
 
         self.module = module
@@ -102,16 +110,21 @@ class _GateHook:
             self.active_channels = int(max_channels)
         else:
             self.active_channels = self.n_channels
-        self.logits = torch.nn.Parameter(torch.zeros(self.active_channels, device=module.weight.device))
         self.gate_floor = float(gate_floor)
+        gate_init = float(max(min(gate_init, 0.9999), self.gate_floor + 1e-4))
+        init_prob = (gate_init - self.gate_floor) / max(1e-6, 1.0 - self.gate_floor)
+        init_prob = float(max(min(init_prob, 0.9999), 1e-4))
+        init_logit = torch.logit(torch.tensor(init_prob, device=module.weight.device))
+        self.logits = torch.nn.Parameter(torch.full((self.active_channels,), float(init_logit.item()), device=module.weight.device))
+        self.initial_gate = self.gate().detach().clone()
         self.handle = module.register_forward_hook(self._hook)
 
     def gate(self):
         import torch
 
-        # Gate range [floor, 1]. A smaller learned gate during unlearning means
-        # this channel strongly contributes to clean behavior; large movement is
-        # suspicious when combined with FMP/ASR evidence.
+        # Gate range [floor, 1]. Gates start near 1.0, so scoring only reflects
+        # actual movement found by the RNP-lite probe rather than a built-in
+        # half-strength perturbation.
         return self.gate_floor + (1.0 - self.gate_floor) * torch.sigmoid(self.logits)
 
     def _hook(self, _module, _inp, output):
@@ -156,7 +169,16 @@ def score_rnp_channels_for_yolo(
         p.requires_grad_(False)
 
     convs = _select_conv_modules(model, max_layers=cfg.max_layers)
-    hooks = [_GateHook(module, name, max_channels=cfg.max_channels_per_layer, gate_floor=cfg.gate_floor) for name, module in convs]
+    hooks = [
+        _GateHook(
+            module,
+            name,
+            max_channels=cfg.max_channels_per_layer,
+            gate_floor=cfg.gate_floor,
+            gate_init=cfg.gate_init,
+        )
+        for name, module in convs
+    ]
     params = [h.logits for h in hooks]
     if not params:
         raise RuntimeError("No Conv2d layers found for RNP scoring")
@@ -172,8 +194,10 @@ def score_rnp_channels_for_yolo(
             opt.zero_grad(set_to_none=True)
             loss = supervised_yolo_loss(model, batch)
             gates = torch.cat([h.gate() for h in hooks])
-            # Maximize task loss, with a tiny pressure to expose sparse channels.
-            objective = -loss + float(cfg.gate_l1) * gates.mean()
+            # Maximize task loss while penalizing gate drops. The previous
+            # implementation penalized high gates and encouraged broad model
+            # destruction, which made RNP candidates unusable.
+            objective = -loss + float(cfg.gate_l1) * (1.0 - gates).mean()
             objective.backward()
             opt.step()
             steps += 1
@@ -181,7 +205,8 @@ def score_rnp_channels_for_yolo(
     rows: List[Dict[str, Any]] = []
     for h in hooks:
         gate = h.gate().detach().float().cpu()
-        movement = (1.0 - gate).abs()
+        initial_gate = h.initial_gate.detach().float().cpu()
+        movement = (initial_gate - gate).clamp(min=0.0)
         for c in range(h.active_channels):
             rows.append(
                 {
@@ -189,6 +214,7 @@ def score_rnp_channels_for_yolo(
                     "channel": int(c),
                     "score": float(movement[c].item()),
                     "gate": float(gate[c].item()),
+                    "initial_gate": float(initial_gate[c].item()),
                     "method": "rnp_lite_gate_unlearn",
                 }
             )
@@ -199,7 +225,7 @@ def score_rnp_channels_for_yolo(
     output_csv = Path(output_csv)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     with output_csv.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["layer", "channel", "score", "gate", "method"])
+        writer = csv.DictWriter(f, fieldnames=["layer", "channel", "score", "gate", "initial_gate", "method"])
         writer.writeheader()
         writer.writerows(rows)
     summary_path = output_csv.with_suffix(".summary.json")
