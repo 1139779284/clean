@@ -4,6 +4,10 @@
 
 默认适配 Ultralytics YOLO 检测模型，例如 YOLOv8/YOLO11 系列 `.pt` 权重。核心目标不是猜出 trigger，而是检查模型是否依赖非因果捷径：目标区域还在时预测应该稳定；目标区域被移除后预测应该消失；衣服颜色、背景、纹理、压缩、光照等非因果因素不应该单独控制关键类别输出。
 
+## 当前状态与待完善算法
+
+请先看 [`docs/ALGORITHM_COVERAGE_AND_ROADMAP.md`](docs/ALGORITHM_COVERAGE_AND_ROADMAP.md)。这里列出了当前已经接入的扫描/净化/验收模块，也明确标出仍缺失或只是近似实现的算法，包括 Neural Cleanse、Activation Clustering、Spectral Signatures、STRIP、ABS、RNP 和完整 FMP 接入。
+
 ## 安装
 
 ```bash
