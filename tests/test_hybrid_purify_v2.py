@@ -21,3 +21,9 @@ def test_rnp_config_import_is_lightweight():
     cfg = RNPConfig(unlearn_steps=3, max_images=4)
     assert cfg.unlearn_steps == 3
     assert cfg.max_images == 4
+
+
+def test_phase_level_selection_defaults_are_safe():
+    cfg = HybridPurifyConfig()
+    assert cfg.evaluate_each_phase is True
+    assert cfg.rollback_bad_phase is True

@@ -45,6 +45,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--eval-max-images", type=int, default=None)
     p.add_argument("--no-feature-purifier", action="store_true", default=None)
     p.add_argument("--no-clean-recovery-finetune", action="store_true", default=None)
+    p.add_argument("--no-evaluate-each-phase", action="store_true", default=None, help="Disable phase-level external ASR checkpoint selection")
+    p.add_argument("--no-rollback-bad-phase", action="store_true", default=None, help="Continue from a phase even if it worsens an external attack")
     p.add_argument("--trusted-teacher-required", action="store_true", default=None)
     p.add_argument("--amp", action="store_true", default=None)
     p.add_argument("--no-pre-prune", action="store_true", default=None, help="Disable RNP-lite pre-prune candidate")
@@ -76,6 +78,8 @@ def _resolved(args: argparse.Namespace) -> dict:
     bool_map = {
         "no_feature_purifier": ("run_feature_purifier", False),
         "no_clean_recovery_finetune": ("run_clean_recovery_finetune", False),
+        "no_evaluate_each_phase": ("evaluate_each_phase", False),
+        "no_rollback_bad_phase": ("rollback_bad_phase", False),
         "no_pre_prune": ("run_pre_prune", False),
         "allow_attack_worse": ("require_no_attack_worse", False),
     }

@@ -87,6 +87,8 @@ class HybridPurifyConfig:
     run_feature_purifier: bool = True
     run_clean_recovery_finetune: bool = True
     trusted_teacher_required: bool = False
+    evaluate_each_phase: bool = True
+    rollback_bad_phase: bool = True
 
     # Conservative RNP-lite soft-pruning. This is not a hard requirement for
     # acceptance; it is evaluated as a candidate and rolled back if external ASR
@@ -474,6 +476,45 @@ def run_hybrid_purify_detox_yolo(
             "_evals": evals,
         }
 
+    def consider_candidate(
+        item: Dict[str, Any],
+        evals: Mapping[str, Any],
+        *,
+        rollback_on_blocked: bool,
+        rollback_on_no_improvement: bool,
+    ) -> tuple[Dict[str, Any], bool, bool]:
+        nonlocal best_item, accepted_model, accepted_hard_scores, accepted_external_rows
+
+        blocked = bool(
+            cfg.require_no_attack_worse
+            and int((item.get("asr_compare_to_baseline") or {}).get("n_worse", 0) or 0) > 0
+        )
+        improved = item["selection_score"] < float(best_item["selection_score"]) - float(cfg.min_selection_improvement)
+        public_item = {k: v for k, v in item.items() if k != "_evals"}
+        public_item["blocked"] = blocked
+        public_item["improved"] = improved
+
+        if improved and not blocked:
+            public_item["accepted_as_best"] = True
+            public_item["rolled_back"] = False
+            best_item = public_item
+            manifest["best"] = best_item
+            accepted_model = Path(public_item["model"])
+            accepted_hard_scores = _combined_scores(evals)
+            accepted_external_rows = (evals.get("external") or {}).get("rows") or accepted_external_rows
+            return public_item, True, False
+
+        public_item["accepted_as_best"] = False
+        if blocked:
+            public_item["rollback_reason"] = "attack_worse_than_baseline"
+            public_item["rolled_back"] = bool(rollback_on_blocked)
+        else:
+            public_item["rollback_reason"] = "no_selection_improvement"
+            public_item["rolled_back"] = bool(rollback_on_no_improvement)
+        if public_item["rolled_back"]:
+            public_item["rollback_to"] = str(accepted_model)
+        return public_item, False, bool(public_item["rolled_back"])
+
     # RNP-lite candidate before gradient-heavy purification.
     if cfg.run_pre_prune and int(cfg.pre_prune_top_k) > 0:
         rnp_dir = output_dir / "00_rnp_candidate"
@@ -552,6 +593,7 @@ def run_hybrid_purify_detox_yolo(
         )
         phases = _build_phase_plan(cfg.attack_specs, accepted_hard_scores, closed_cfg)
         cycle_info: Dict[str, Any] = {"cycle": cycle, "phases": [], "hard_scores_in": dict(accepted_hard_scores)}
+        stop_after_phase = False
 
         for pi, phase in enumerate(phases, 1):
             phase_yaml = _build_phase_dataset(
@@ -566,6 +608,7 @@ def run_hybrid_purify_detox_yolo(
                 replay_datasets=replay_datasets,
             )
             phase_dir = output_dir / f"02_cycle_{cycle:02d}_phase_{pi:02d}_{phase.name}"
+            phase_entry: Dict[str, Any] = {"phase": asdict(phase), "data_yaml": str(phase_yaml), "evaluations": []}
             if cfg.run_feature_purifier:
                 current_model = _run_feature_purifier_phase(
                     model=current_model,
@@ -576,6 +619,34 @@ def run_hybrid_purify_detox_yolo(
                     phase_name=phase.name,
                     cfg=cfg,
                 )
+                phase_entry["model_after_feature"] = str(current_model)
+                if cfg.evaluate_each_phase:
+                    feature_item = evaluate_candidate(
+                        Path(current_model),
+                        tag=f"cycle_{cycle:02d}_phase_{pi:02d}_{phase.name}_feature",
+                        cycle_info={
+                            "cycle": cycle,
+                            "phase": asdict(phase),
+                            "phase_index": pi,
+                            "stage": "feature_purify",
+                        },
+                    )
+                    feature_item["cycle"] = cycle
+                    feature_item["phase_index"] = pi
+                    feature_item["stage"] = "feature_purify"
+                    feature_evals = feature_item.pop("_evals")
+                    public_feature, accepted, should_rollback = consider_candidate(
+                        feature_item,
+                        feature_evals,
+                        rollback_on_blocked=bool(cfg.rollback_bad_phase),
+                        rollback_on_no_improvement=False,
+                    )
+                    phase_entry["evaluations"].append(public_feature)
+                    if should_rollback:
+                        current_model = accepted_model
+                        phase_entry["model_after_feature_rollback"] = str(current_model)
+                    if accepted and public_feature.get("passes") and cfg.stop_on_pass:
+                        stop_after_phase = True
             if cfg.run_clean_recovery_finetune and ("recovery" in phase.name or "clean_anchor" in phase.name):
                 current_model = _run_clean_recovery_finetune(
                     model=current_model,
@@ -584,29 +655,54 @@ def run_hybrid_purify_detox_yolo(
                     cfg=cfg,
                     epochs=phase.epochs,
                 )
-            cycle_info["phases"].append({"phase": asdict(phase), "data_yaml": str(phase_yaml), "model_after": str(current_model)})
+                phase_entry["model_after_recovery"] = str(current_model)
+                if cfg.evaluate_each_phase:
+                    recovery_item = evaluate_candidate(
+                        Path(current_model),
+                        tag=f"cycle_{cycle:02d}_phase_{pi:02d}_{phase.name}_recovery",
+                        cycle_info={
+                            "cycle": cycle,
+                            "phase": asdict(phase),
+                            "phase_index": pi,
+                            "stage": "clean_recovery",
+                        },
+                    )
+                    recovery_item["cycle"] = cycle
+                    recovery_item["phase_index"] = pi
+                    recovery_item["stage"] = "clean_recovery"
+                    recovery_evals = recovery_item.pop("_evals")
+                    public_recovery, accepted, should_rollback = consider_candidate(
+                        recovery_item,
+                        recovery_evals,
+                        rollback_on_blocked=bool(cfg.rollback_bad_phase),
+                        rollback_on_no_improvement=False,
+                    )
+                    phase_entry["evaluations"].append(public_recovery)
+                    if should_rollback:
+                        current_model = accepted_model
+                        phase_entry["model_after_recovery_rollback"] = str(current_model)
+                    if accepted and public_recovery.get("passes") and cfg.stop_on_pass:
+                        stop_after_phase = True
+            phase_entry["model_after"] = str(current_model)
+            cycle_info["phases"].append(phase_entry)
             write_json(output_dir / "hybrid_purify_manifest.json", manifest)
+            if stop_after_phase:
+                break
 
         item = evaluate_candidate(Path(current_model), tag=f"cycle_{cycle:02d}", cycle_info=cycle_info)
         item["cycle"] = cycle
         evals = item.pop("_evals")
-        blocked = bool(cfg.require_no_attack_worse and int((item.get("asr_compare_to_baseline") or {}).get("n_worse", 0) or 0) > 0)
-        improved = item["selection_score"] < float(best_item["selection_score"]) - float(cfg.min_selection_improvement)
-        if improved and not blocked:
-            item["rolled_back"] = False
-            best_item = item
-            manifest["best"] = item
-            accepted_model = Path(item["model"])
-            accepted_hard_scores = _combined_scores(evals)
-            accepted_external_rows = (evals.get("external") or {}).get("rows") or accepted_external_rows
-        else:
-            item["rolled_back"] = True
-            item["rollback_to"] = str(accepted_model)
-            item["rollback_reason"] = "attack_worse_than_baseline" if blocked else "no_selection_improvement"
+        public_item, _accepted, should_rollback = consider_candidate(
+            item,
+            evals,
+            rollback_on_blocked=True,
+            rollback_on_no_improvement=True,
+        )
+        if should_rollback:
             current_model = accepted_model
-        manifest["cycles"].append(item)
+        manifest["cycles"].append(public_item)
         write_json(output_dir / "hybrid_purify_manifest.json", manifest)
-        if item["passes"] and cfg.stop_on_pass:
+        if best_item.get("passes") and cfg.stop_on_pass:
             manifest["status"] = "passed_early"
             break
 

@@ -27,6 +27,11 @@ hybrid_purify_detox:
   external_oda_success_mode: localized_any_recalled
   run_feature_purifier: true
   run_clean_recovery_finetune: true
+  # Evaluate feature/recovery checkpoints immediately. This prevents a good
+  # intermediate purifier checkpoint from being lost after a later phase
+  # worsens blend/semantic/ODA ASR.
+  evaluate_each_phase: true
+  rollback_bad_phase: true
   trusted_teacher_required: false
   amp: false
   # RNP-lite soft suppression is evaluated as a candidate and rolled back if it
