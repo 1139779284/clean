@@ -104,6 +104,12 @@ class HybridPurifyConfig:
     aggressive_failure_replay_repeat: int = 8
     aggressive_top_k_attacks_per_cycle: int = 2
     defer_clean_recovery_in_aggressive: bool = True
+    aggressive_lambda_oda_recall: float = 2.0
+    oda_recall_min_conf: float = 0.45
+    oda_recall_iou_threshold: float = 0.05
+    oda_recall_center_radius: float = 1.50
+    oda_recall_topk: int = 24
+    oda_recall_loss_scale: float = 1.0
 
     # Conservative RNP-lite soft-pruning. This is not a hard requirement for
     # acceptance; it is evaluated as a candidate and rolled back if external ASR
@@ -199,6 +205,7 @@ def _phase_feature_weights(phase_name: str) -> Dict[str, float]:
             "lambda_attention": 0.15,
             "lambda_prototype": 0.25,
             "lambda_proto_suppress": 0.65,
+            "lambda_oda_recall": 0.0,
         }
     if "oda" in low:
         return {
@@ -210,6 +217,7 @@ def _phase_feature_weights(phase_name: str) -> Dict[str, float]:
             "lambda_attention": 0.35,
             "lambda_prototype": 0.55,
             "lambda_proto_suppress": 0.10,
+            "lambda_oda_recall": 1.0,
         }
     if "semantic" in low:
         return {
@@ -221,6 +229,7 @@ def _phase_feature_weights(phase_name: str) -> Dict[str, float]:
             "lambda_attention": 0.25,
             "lambda_prototype": 0.55,
             "lambda_proto_suppress": 0.45,
+            "lambda_oda_recall": 0.25,
         }
     if "wanet" in low or "warp" in low:
         return {
@@ -232,6 +241,7 @@ def _phase_feature_weights(phase_name: str) -> Dict[str, float]:
             "lambda_attention": 0.20,
             "lambda_prototype": 0.35,
             "lambda_proto_suppress": 0.25,
+            "lambda_oda_recall": 0.35,
         }
     # Clean anchor/recovery: keep output close to teacher and recover mAP.
     return {
@@ -243,6 +253,7 @@ def _phase_feature_weights(phase_name: str) -> Dict[str, float]:
         "lambda_attention": 0.15,
         "lambda_prototype": 0.25,
         "lambda_proto_suppress": 0.05,
+        "lambda_oda_recall": 0.0,
     }
 
 
@@ -271,6 +282,10 @@ def _run_feature_purifier_phase(
             weights["lambda_attention"] = max(float(weights.get("lambda_attention", 0.0)), 0.55)
             weights["lambda_prototype"] = max(float(weights.get("lambda_prototype", 0.0)), 1.10)
             weights["lambda_proto_suppress"] = min(float(weights.get("lambda_proto_suppress", 0.0)), 0.05)
+            weights["lambda_oda_recall"] = max(
+                float(weights.get("lambda_oda_recall", 0.0)),
+                float(cfg.aggressive_lambda_oda_recall),
+            )
     epochs = max(1, int(cfg.aggressive_feature_epochs if aggressive else cfg.feature_epochs))
     lr = float(cfg.recovery_lr if "clean" in phase_low or "recovery" in phase_low else cfg.lr)
     if aggressive:
@@ -295,6 +310,11 @@ def _run_feature_purifier_phase(
         prototype_max_batches=int(cfg.prototype_max_batches),
         target_class_ids=[int(x) for x in target_ids],
         adv_steps=int(cfg.aggressive_adv_steps if aggressive else 2),
+        oda_recall_min_conf=float(cfg.oda_recall_min_conf),
+        oda_recall_iou_threshold=float(cfg.oda_recall_iou_threshold),
+        oda_recall_center_radius=float(cfg.oda_recall_center_radius),
+        oda_recall_topk=int(cfg.oda_recall_topk),
+        oda_recall_loss_scale=float(cfg.oda_recall_loss_scale),
         save_every=1 if cfg.external_select_phase_checkpoints else max(1, epochs),
         **weights,
     )

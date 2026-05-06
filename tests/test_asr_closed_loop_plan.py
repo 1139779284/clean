@@ -1,5 +1,5 @@
 from model_security_gate.detox.asr_aware_dataset import AttackTransformConfig
-from model_security_gate.detox.asr_closed_loop_train import ASRClosedLoopConfig, _build_phase_plan
+from model_security_gate.detox.asr_closed_loop_train import ASRClosedLoopConfig, _build_phase_plan, _combined_scores
 
 
 def test_closed_loop_phase_plan_activates_oda_when_oda_external_asr_high():
@@ -16,3 +16,16 @@ def test_closed_loop_phase_plan_activates_oda_when_oda_external_asr_high():
     oda = [p for p in phases if p.name == "oda_hardening"][0]
     assert oda.attack_repeat > cfg.base_attack_repeat
     assert oda.clean_repeat >= oda.attack_repeat
+
+
+def test_combined_scores_are_external_first_when_external_suite_exists():
+    evals = {
+        "external": {"summary": {"asr_matrix": {"suite::badnet_oda": 0.875, "suite::wanet_oga": 0.7}}},
+        "internal": {"summary": {"asr_matrix": {"badnet_oga": 1.0, "wanet_oga": 1.0}}},
+    }
+    scores = _combined_scores(evals)
+    assert scores["suite::badnet_oda"] == 0.875
+    assert scores["badnet_oda"] == 0.875
+    assert scores["suite::wanet_oga"] == 0.7
+    assert scores["wanet_oga"] == 0.7
+    assert "badnet_oga" not in scores

@@ -30,6 +30,9 @@ def test_phase_level_selection_defaults_are_safe():
     assert cfg.rollback_bad_phase is True
     assert cfg.external_failure_replay is True
     assert cfg.external_select_phase_checkpoints is True
+    assert cfg.aggressive_lambda_oda_recall > 0
+    assert cfg.oda_recall_min_conf > 0
+    assert cfg.oda_recall_loss_scale >= 1
 
 
 def test_attack_score_matching_keeps_oga_and_oda_separate():
@@ -41,3 +44,12 @@ def test_attack_score_matching_keeps_oga_and_oda_separate():
     }
     assert score_for_attack_name(scores, "badnet_oda", kind="badnet_patch", goal="oda") == 0.875
     assert score_for_attack_name(scores, "blend_oga", kind="blend", goal="oga") == 0.275
+
+
+def test_attack_score_matching_does_not_assign_generic_oga_to_missing_badnet_oga():
+    scores = {
+        "poison_benchmark::badnet_oda": 0.875,
+        "poison_benchmark::wanet_oga": 0.700,
+    }
+    assert score_for_attack_name(scores, "badnet_oga", kind="badnet_patch", goal="oga") == 0.0
+    assert score_for_attack_name(scores, "wanet_oga", kind="wanet", goal="oga") == 0.700

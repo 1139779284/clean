@@ -46,6 +46,24 @@ wanet_oga:                  0.700 -> 0.475
 
 Conclusion: the loop is now better targeted than the previous `0.875 -> 0.800` run, but it is still far from effective detox (`external_max_asr <= 0.10`). The dominant blocker is still ODA-style target disappearance; replay alone is not enough and the next algorithmic step should add an ODA-specific recall-preserving detection/feature loss.
 
+Next patch direction now in progress: Hybrid-PURIFY adds an ODA recall-preserving confidence loss in the feature purifier. For every ground-truth target box, the loss requires at least one decoded target-class candidate near that box to keep confidence above a configurable floor. This is designed to attack ODA disappearance directly instead of relying only on generic supervised loss, feature attention, or replay.
+
+Follow-up CUDA smoke results on 2026-05-07:
+
+```text
+D:\clean_yolo\model_security_gate\runs\oda_recall_probe_best2_v2_2026-05-07
+external max ASR:  0.875 -> 0.775
+external mean ASR: 0.5875 -> 0.4250
+badnet_oda:        0.875 -> 0.775
+
+D:\clean_yolo\model_security_gate\runs\oda_recall_probe_best2_v3_scaled_2026-05-07
+external max ASR:  0.875 -> 0.800
+external mean ASR: 0.5875 -> 0.45625
+badnet_oda:        0.875 -> 0.800
+```
+
+The ODA recall loss is active and non-zero in the ODA phase, but the scaled variant was worse than the steadier v2 configuration. Defaults therefore stay conservative (`aggressive_lambda_oda_recall=2.0`, `oda_recall_loss_scale=1.0`) while keeping the knobs exposed for follow-up experiments.
+
 The latest local CUDA validation smoke is:
 
 ```text
@@ -82,14 +100,15 @@ The audit found an important ASR-definition ambiguity rather than a class-map in
 - External ASR validation must use held-out suites where possible; using the same suite for replay and evaluation can overstate robustness.
 - The current ASR target is still unmet: `external_max_asr <= 0.10` and clean `mAP50-95` drop `<= 0.03`.
 - ODA hardening remains the most difficult failure mode. Current failure replay reduces it slightly but does not suppress it enough.
+- The ODA recall loss is a stronger training signal and has passed CUDA smoke validation, but current results are still far from the required ASR threshold.
 - GitHub CI is CPU/static-test oriented; real YOLO/CUDA detox runs must be validated locally.
 - Full datasets, run directories, and large transient model artifacts are intentionally not committed.
 - ODA ASR must be reported with its explicit success mode. Do not compare old runs unless `oda_success_mode` is the same.
 
 ## Recommended Next Steps
 
-1. Let the current v4 external closed-loop run finish and record the final top failing attacks.
-2. Run Hybrid-PURIFY-OD with a trusted clean teacher if available.
+1. Run a longer Hybrid-PURIFY-OD experiment with the conservative ODA-recall defaults and a trusted clean teacher if available.
+2. If `badnet_oda` remains high, replace the current confidence-floor loss with a matched decoded-candidate BCE/distillation loss or integrate the recall-preserving term closer to YOLO assignment-level training.
 3. Prefer split hard suites:
    - replay/train: `poison_benchmark_cuda_large`
    - held-out eval/selection: `poison_benchmark_cuda_tuned`

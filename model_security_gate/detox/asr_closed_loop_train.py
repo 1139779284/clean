@@ -313,10 +313,10 @@ def _evaluate_all(
 
 
 def _combined_scores(evals: Mapping[str, Any]) -> Dict[str, float]:
-    scores: Dict[str, float] = {}
-    for key in ["external", "internal"]:
-        scores.update(attack_score_lookup(evals.get(key)))
-    return scores
+    external = attack_score_lookup(evals.get("external"))
+    if external:
+        return external
+    return attack_score_lookup(evals.get("internal"))
 
 
 def run_asr_closed_loop_detox_yolo(

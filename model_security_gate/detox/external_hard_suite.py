@@ -375,7 +375,7 @@ def score_for_attack_name(scores: Mapping[str, float], attack_name: str, kind: s
         if kind_low and not goal_low and any(alias and alias in tail for alias in kind_aliases):
             fallback = max(fallback, float(value))
             continue
-        if goal_low and goal_low in tail:
+        if goal_low and not kind_low and goal_low in tail:
             fallback = max(fallback, float(value))
     if best > 0:
         return best
