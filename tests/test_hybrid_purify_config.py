@@ -4,7 +4,12 @@ import yaml
 import torch
 
 from model_security_gate.detox.hybrid_purify_train import _same_root_sets, _torch_device_arg
-from model_security_gate.detox.strong_train import _torch_model
+from model_security_gate.detox.strong_train import (
+    _normalize_ultralytics_loss_args,
+    _reset_ultralytics_criterion,
+    _torch_model,
+    _unfreeze_trainable_model,
+)
 
 
 def test_hybrid_purify_config_has_required_sections():
@@ -48,3 +53,34 @@ def test_strong_train_prefers_ultralytics_inner_model():
 
     wrapper = Wrapper()
     assert _torch_model(wrapper) is wrapper.model
+
+
+def test_strong_train_normalizes_checkpoint_args_for_loss():
+    model = torch.nn.Linear(1, 1)
+    model.args = {"task": "detect", "imgsz": 640}
+
+    _normalize_ultralytics_loss_args(model)
+
+    assert hasattr(model.args, "box")
+    assert hasattr(model.args, "cls")
+    assert hasattr(model.args, "dfl")
+    assert model.args.task == "detect"
+
+
+def test_strong_train_unfreezes_loaded_student_weights():
+    model = torch.nn.Linear(1, 1)
+    for param in model.parameters():
+        param.requires_grad_(False)
+
+    _unfreeze_trainable_model(model)
+
+    assert all(param.requires_grad for param in model.parameters())
+
+
+def test_strong_train_resets_serialized_criterion():
+    model = torch.nn.Linear(1, 1)
+    model.criterion = object()
+
+    _reset_ultralytics_criterion(model)
+
+    assert model.criterion is None

@@ -12,13 +12,13 @@ This branch contains the current experimental hardening line for YOLO backdoor d
 
 ## Current Experimental Result
 
-The active local CUDA experiment is:
+The latest local CUDA validation smoke is:
 
 ```text
-D:\clean_yolo\model_security_gate\runs\asr_closed_loop_v4_full_best2_2026-05-06
+D:\clean_yolo\model_security_gate\runs\hybrid_purify_smoke7_best2_2026-05-06
 ```
 
-At the time of this snapshot, the run is still in progress. The best observed external max ASR remains high, around `0.885`, so this is **not a production-safe model** and does not satisfy the target acceptance threshold `external_max_asr <= 0.10`.
+This smoke completed one Hybrid-PURIFY cycle without code/runtime failure. It did **not** improve the held-out external hard-suite score enough to be accepted: baseline external max ASR was `0.95`, the cycle candidate reached `1.00`, and the rollback guard correctly kept the final model at the original baseline path. This is **not a production-safe model** and does not satisfy the target acceptance threshold `external_max_asr <= 0.10`.
 
 The major blocker is still detection-backdoor detox under external hard suites, especially ODA-style target disappearance and related semantic/WaNet failures. The current code is useful for diagnosis and iteration, but the generated candidate model must still pass final Security Gate + acceptance checks before any deployment use.
 
@@ -32,7 +32,7 @@ The major blocker is still detection-backdoor detox under external hard suites, 
 
 ## Known Gaps
 
-- Hybrid-PURIFY-OD has compile/test coverage, but it has not yet completed a real full CUDA run on `best 2.pt`.
+- Hybrid-PURIFY-OD now has compile/test coverage and a completed small CUDA smoke on `best 2.pt`, but it has not yet completed a full CUDA optimization run.
 - Without a trusted clean teacher checkpoint, feature-level distillation falls back to a frozen suspicious model and should be treated only as risk reduction.
 - External ASR validation must use held-out suites where possible; using the same suite for replay and evaluation can overstate robustness.
 - The current ASR target is still unmet: `external_max_asr <= 0.10` and clean `mAP50-95` drop `<= 0.03`.
