@@ -507,6 +507,60 @@ algorithmic step is to change the optimization target itself, likely by
 directly optimizing post-NMS localized recall or by generating attack-preserving
 positive pairs rather than repeating the same ODA failed images.
 
+### 2026-05-07 ODA Post-NMS Repair Upgrade Smoke
+
+New overlay integrated:
+
+```text
+model_security_gate/detox/oda_postnms_repair.py
+scripts/oda_postnms_repair_yolo.py
+tests/test_oda_postnms_repair.py
+docs/ODA_POSTNMS_REPAIR.md
+configs/oda_postnms_repair.yaml
+```
+
+This is a narrower repair path than `targeted_repair_yolo.py`: it keeps only
+full-image `success=true` ODA failures, makes `matched_candidate_oda_loss` the
+dominant objective, evaluates after every epoch, and rolls back unless an
+unblocked external score improvement is found.
+
+CUDA smoke:
+
+```text
+D:\clean_yolo\model_security_gate\runs\oda_postnms_repair_debug_2026-05-07
+```
+
+Inputs:
+
+```text
+start model: pareto_upgrade_smoke_2026-05-07\models\pareto_global_alpha_1p0.pt
+baseline external max ASR: 0.15
+baseline external mean ASR: 0.075
+selected attack: badnet_oda
+failure rows: 3
+failure replay: 72 full-image samples
+epochs: 10
+```
+
+Result:
+
+```text
+best candidate external max ASR: 0.20
+best candidate external mean ASR: 0.0625
+blocked attack: badnet_oda
+rolled_back: true
+final_model: input 0.15 Pareto candidate
+status: failed_external_asr_or_worsening
+```
+
+Conclusion: the new post-NMS repair entry point is useful for controlled
+experiments and correctly rolls back unsafe candidates, but it still does not
+solve the residual ODA disappearance. Since crop replay, full-image replay,
+generic targeted repair, and post-NMS-style matched-candidate repair all fail
+or worsen ODA, the next algorithmic step should inspect pre-NMS candidate
+ranking vs. final adapter detections and implement a detector-version-specific
+NMS/ranking proxy or attack-preserving positive-pair distillation.
+
 The latest local CUDA validation smoke is:
 
 ```text
