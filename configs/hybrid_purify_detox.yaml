@@ -45,11 +45,19 @@ hybrid_purify_detox:
   aggressive_top_k_attacks_per_cycle: 2
   defer_clean_recovery_in_aggressive: true
   aggressive_lambda_oda_recall: 2.0
+  aggressive_lambda_oda_matched: 1.0
+  aggressive_lambda_pgbd_paired: 0.70
+  aggressive_lambda_oga_negative: 0.80
   oda_recall_min_conf: 0.45
   oda_recall_iou_threshold: 0.05
   oda_recall_center_radius: 1.50
   oda_recall_topk: 24
   oda_recall_loss_scale: 1.0
+  oda_matched_box_weight: 0.25
+  oda_matched_teacher_score_weight: 0.25
+  oda_matched_teacher_box_weight: 0.10
+  pgbd_view_mode: mixed
+  pgbd_negative_margin: 0.25
   trusted_teacher_required: false
   amp: false
   # RNP-lite soft suppression is evaluated as a candidate and rolled back if it

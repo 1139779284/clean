@@ -24,6 +24,8 @@ from model_security_gate.detox.losses import (
     supervised_yolo_loss,
     target_recall_confidence_loss,
 )
+from model_security_gate.detox.oda_loss_v2 import matched_candidate_oda_loss, negative_target_candidate_suppression_loss
+from model_security_gate.detox.pgbd_od import make_pgbd_attack_view, pgbd_paired_displacement_loss
 from model_security_gate.detox.prototype import PrototypeBank, build_prototype_bank, prototype_alignment_loss, target_prototype_suppression_loss
 from model_security_gate.detox.yolo_dataset import make_yolo_dataloader, move_batch_to_device, parse_yolo_data_yaml
 from model_security_gate.utils.io import json_default, write_json
@@ -76,6 +78,22 @@ class StrongDetoxConfig:
     oda_recall_center_radius: float = 1.50
     oda_recall_topk: int = 24
     oda_recall_loss_scale: float = 1.0
+    lambda_oda_matched: float = 0.0
+    oda_matched_cls_weight: float = 1.0
+    oda_matched_box_weight: float = 0.25
+    oda_matched_teacher_score_weight: float = 0.25
+    oda_matched_teacher_box_weight: float = 0.10
+    lambda_oga_negative: float = 0.0
+    oga_negative_topk: int = 256
+    lambda_pgbd_paired: float = 0.0
+    pgbd_view_mode: str = "mixed"
+    pgbd_green_strength: float = 0.35
+    pgbd_blend_alpha: float = 0.10
+    pgbd_warp_amplitude: float = 0.025
+    pgbd_negative_margin: float = 0.25
+    pgbd_target_weight: float = 1.0
+    pgbd_negative_weight: float = 1.0
+    pgbd_displacement_weight: float = 0.50
 
     # I-BAU-style adversarial unlearning
     adv_eps: float = 4.0 / 255.0
@@ -210,20 +228,49 @@ def run_strong_detox_training(cfg: StrongDetoxConfig) -> Dict[str, Any]:
         aligned_layers = student_layers if teacher_yolo is None else []
 
     prototype_bank: Optional[PrototypeBank] = None
-    if cfg.use_prototype and cfg.lambda_prototype > 0:
-        try:
-            prototype_bank = build_prototype_bank(
-                teacher,
-                train_loader,
-                layer_name=cfg.prototype_layer or (aligned_layers[-1] if aligned_layers else None),
-                max_batches=cfg.prototype_max_batches,
-                device=device,
-            ).to(device)
-            if cfg.prototype_layer is None:
-                cfg.prototype_layer = prototype_bank.layer_name
-        except Exception as exc:
-            prototype_bank = None
-            print(f"[WARN] Prototype bank disabled: {exc}")
+    needs_prototype = bool(
+        cfg.use_prototype
+        and (
+            float(cfg.lambda_prototype) > 0
+            or float(cfg.lambda_proto_suppress) > 0
+            or float(cfg.lambda_pgbd_paired) > 0
+        )
+    )
+    if needs_prototype:
+        # Late YOLO layers such as DFL can expose non-4D tensors, which makes
+        # ROI prototype pooling empty. Try the requested layer first, then walk
+        # backwards through aligned conv layers until a non-empty bank is found.
+        candidates: List[Optional[str]] = []
+        if cfg.prototype_layer:
+            candidates.append(cfg.prototype_layer)
+        # DFL conv outputs are technically hookable but poor prototype spaces:
+        # they can build a non-empty bank while producing near-zero alignment /
+        # paired-displacement gradients. Prefer semantic/class head convs.
+        candidates.extend([layer for layer in reversed(aligned_layers) if layer not in candidates and "dfl" not in layer.lower()])
+        candidates.extend([layer for layer in reversed(aligned_layers) if layer not in candidates])
+        if not candidates:
+            candidates.append(None)
+        last_exc: Exception | None = None
+        for layer_name in candidates:
+            try:
+                bank = build_prototype_bank(
+                    teacher,
+                    train_loader,
+                    layer_name=layer_name,
+                    max_batches=cfg.prototype_max_batches,
+                    device=device,
+                ).to(device)
+                if bank.prototypes:
+                    prototype_bank = bank
+                    cfg.prototype_layer = bank.layer_name
+                    break
+            except Exception as exc:
+                last_exc = exc
+        if prototype_bank is None:
+            if last_exc is not None:
+                print(f"[WARN] Prototype bank disabled: {last_exc}")
+            else:
+                print("[WARN] Prototype bank disabled: no non-empty ROI prototype layer found")
 
     optimizer = torch.optim.AdamW(student.parameters(), lr=float(cfg.lr), weight_decay=float(cfg.weight_decay))
     scaler = torch.cuda.amp.GradScaler(enabled=bool(cfg.amp and device.type == "cuda"))
@@ -241,6 +288,9 @@ def run_strong_detox_training(cfg: StrongDetoxConfig) -> Dict[str, Any]:
         "loss_prototype",
         "loss_proto_suppress",
         "loss_oda_recall",
+        "loss_oda_matched",
+        "loss_oga_negative",
+        "loss_pgbd_paired",
     ]
     with open(log_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
@@ -296,6 +346,51 @@ def run_strong_detox_training(cfg: StrongDetoxConfig) -> Dict[str, Any]:
                     topk=int(cfg.oda_recall_topk),
                     loss_scale=float(cfg.oda_recall_loss_scale),
                 ) * float(cfg.lambda_oda_recall) if cfg.target_class_ids and float(cfg.lambda_oda_recall) > 0 else loss_task * 0.0
+                loss_oda_matched = matched_candidate_oda_loss(
+                    s_out,
+                    batch,
+                    cfg.target_class_ids,
+                    teacher_prediction=t_out if cfg.use_teacher else None,
+                    iou_threshold=float(cfg.oda_recall_iou_threshold),
+                    center_radius=float(cfg.oda_recall_center_radius),
+                    topk=int(cfg.oda_recall_topk),
+                    cls_weight=float(cfg.oda_matched_cls_weight),
+                    box_weight=float(cfg.oda_matched_box_weight),
+                    teacher_score_weight=float(cfg.oda_matched_teacher_score_weight),
+                    teacher_box_weight=float(cfg.oda_matched_teacher_box_weight),
+                ) * float(cfg.lambda_oda_matched) if cfg.target_class_ids and float(cfg.lambda_oda_matched) > 0 else loss_task * 0.0
+                loss_oga_negative = negative_target_candidate_suppression_loss(
+                    s_out,
+                    batch,
+                    cfg.target_class_ids,
+                    topk=int(cfg.oga_negative_topk),
+                ) * float(cfg.lambda_oga_negative) if cfg.target_class_ids and float(cfg.lambda_oga_negative) > 0 else loss_task * 0.0
+
+                if cfg.lambda_pgbd_paired > 0 and prototype_bank is not None and s_feats:
+                    attacked_img = make_pgbd_attack_view(
+                        batch["img"],
+                        mode=str(cfg.pgbd_view_mode),
+                        green_strength=float(cfg.pgbd_green_strength),
+                        blend_alpha=float(cfg.pgbd_blend_alpha),
+                        warp_amplitude=float(cfg.pgbd_warp_amplitude),
+                    )
+                    with ActivationCatcher(student, aligned_layers) as s_attack_ac:
+                        _ = raw_prediction(student, attacked_img)
+                    ref_feats = t_feats if cfg.use_teacher and t_feats else {k: v.detach() for k, v in s_feats.items()}
+                    loss_pgbd_paired = pgbd_paired_displacement_loss(
+                        ref_feats,
+                        s_attack_ac.features,
+                        batch,
+                        prototype_bank,
+                        cfg.target_class_ids,
+                        layer_name=cfg.prototype_layer,
+                        target_weight=float(cfg.pgbd_target_weight),
+                        negative_weight=float(cfg.pgbd_negative_weight),
+                        displacement_weight=float(cfg.pgbd_displacement_weight),
+                        negative_margin=float(cfg.pgbd_negative_margin),
+                    ) * float(cfg.lambda_pgbd_paired)
+                else:
+                    loss_pgbd_paired = loss_task * 0.0
 
                 if cfg.lambda_adv > 0 and cfg.adv_steps > 0:
                     adv_img = pgd_adversarial_images(
@@ -322,6 +417,9 @@ def run_strong_detox_training(cfg: StrongDetoxConfig) -> Dict[str, Any]:
                     + loss_prototype
                     + loss_proto_suppress
                     + loss_oda_recall
+                    + loss_oda_matched
+                    + loss_oga_negative
+                    + loss_pgbd_paired
                 )
 
             scaler.scale(loss_total).backward()
@@ -344,6 +442,9 @@ def run_strong_detox_training(cfg: StrongDetoxConfig) -> Dict[str, Any]:
                 "loss_prototype": _safe_float(loss_prototype),
                 "loss_proto_suppress": _safe_float(loss_proto_suppress),
                 "loss_oda_recall": _safe_float(loss_oda_recall),
+                "loss_oda_matched": _safe_float(loss_oda_matched),
+                "loss_oga_negative": _safe_float(loss_oga_negative),
+                "loss_pgbd_paired": _safe_float(loss_pgbd_paired),
             }
             epoch_losses.append(row["loss_total"])
             pbar.set_postfix({"loss": f"{row['loss_total']:.4f}", "task": f"{row['loss_task']:.4f}"})

@@ -112,6 +112,14 @@ class HybridPurifyConfig:
     oda_recall_center_radius: float = 1.50
     oda_recall_topk: int = 24
     oda_recall_loss_scale: float = 1.0
+    aggressive_lambda_oda_matched: float = 1.0
+    aggressive_lambda_pgbd_paired: float = 0.70
+    aggressive_lambda_oga_negative: float = 0.80
+    oda_matched_box_weight: float = 0.25
+    oda_matched_teacher_score_weight: float = 0.25
+    oda_matched_teacher_box_weight: float = 0.10
+    pgbd_view_mode: str = "mixed"
+    pgbd_negative_margin: float = 0.25
 
     # Conservative RNP-lite soft-pruning. This is not a hard requirement for
     # acceptance; it is evaluated as a candidate and rolled back if external ASR
@@ -208,6 +216,9 @@ def _phase_feature_weights(phase_name: str) -> Dict[str, float]:
             "lambda_prototype": 0.25,
             "lambda_proto_suppress": 0.65,
             "lambda_oda_recall": 0.0,
+            "lambda_oda_matched": 0.0,
+            "lambda_oga_negative": 0.75,
+            "lambda_pgbd_paired": 0.45,
         }
     if "oda" in low:
         return {
@@ -220,6 +231,9 @@ def _phase_feature_weights(phase_name: str) -> Dict[str, float]:
             "lambda_prototype": 0.55,
             "lambda_proto_suppress": 0.10,
             "lambda_oda_recall": 1.0,
+            "lambda_oda_matched": 0.75,
+            "lambda_oga_negative": 0.0,
+            "lambda_pgbd_paired": 0.45,
         }
     if "semantic" in low:
         return {
@@ -232,6 +246,9 @@ def _phase_feature_weights(phase_name: str) -> Dict[str, float]:
             "lambda_prototype": 0.55,
             "lambda_proto_suppress": 0.45,
             "lambda_oda_recall": 0.25,
+            "lambda_oda_matched": 0.35,
+            "lambda_oga_negative": 0.35,
+            "lambda_pgbd_paired": 0.80,
         }
     if "wanet" in low or "warp" in low:
         return {
@@ -244,6 +261,9 @@ def _phase_feature_weights(phase_name: str) -> Dict[str, float]:
             "lambda_prototype": 0.35,
             "lambda_proto_suppress": 0.25,
             "lambda_oda_recall": 0.35,
+            "lambda_oda_matched": 0.45,
+            "lambda_oga_negative": 0.15,
+            "lambda_pgbd_paired": 0.80,
         }
     # Clean anchor/recovery: keep output close to teacher and recover mAP.
     return {
@@ -256,6 +276,9 @@ def _phase_feature_weights(phase_name: str) -> Dict[str, float]:
         "lambda_prototype": 0.25,
         "lambda_proto_suppress": 0.05,
         "lambda_oda_recall": 0.0,
+        "lambda_oda_matched": 0.0,
+        "lambda_oga_negative": 0.0,
+        "lambda_pgbd_paired": 0.0,
     }
 
 
@@ -288,6 +311,24 @@ def _run_feature_purifier_phase(
                 float(weights.get("lambda_oda_recall", 0.0)),
                 float(cfg.aggressive_lambda_oda_recall),
             )
+            weights["lambda_oda_matched"] = max(
+                float(weights.get("lambda_oda_matched", 0.0)),
+                float(cfg.aggressive_lambda_oda_matched),
+            )
+            weights["lambda_pgbd_paired"] = max(
+                float(weights.get("lambda_pgbd_paired", 0.0)),
+                float(cfg.aggressive_lambda_pgbd_paired),
+            )
+        if "oga" in phase_low or "semantic" in phase_low or "wanet" in phase_low:
+            weights["lambda_pgbd_paired"] = max(
+                float(weights.get("lambda_pgbd_paired", 0.0)),
+                float(cfg.aggressive_lambda_pgbd_paired),
+            )
+        if "oga" in phase_low:
+            weights["lambda_oga_negative"] = max(
+                float(weights.get("lambda_oga_negative", 0.0)),
+                float(cfg.aggressive_lambda_oga_negative),
+            )
     epochs = max(1, int(cfg.aggressive_feature_epochs if aggressive else cfg.feature_epochs))
     lr = float(cfg.recovery_lr if "clean" in phase_low or "recovery" in phase_low else cfg.lr)
     if aggressive:
@@ -317,6 +358,11 @@ def _run_feature_purifier_phase(
         oda_recall_center_radius=float(cfg.oda_recall_center_radius),
         oda_recall_topk=int(cfg.oda_recall_topk),
         oda_recall_loss_scale=float(cfg.oda_recall_loss_scale),
+        oda_matched_box_weight=float(cfg.oda_matched_box_weight),
+        oda_matched_teacher_score_weight=float(cfg.oda_matched_teacher_score_weight),
+        oda_matched_teacher_box_weight=float(cfg.oda_matched_teacher_box_weight),
+        pgbd_view_mode=str(cfg.pgbd_view_mode),
+        pgbd_negative_margin=float(cfg.pgbd_negative_margin),
         save_every=1 if cfg.external_select_phase_checkpoints else max(1, epochs),
         **weights,
     )

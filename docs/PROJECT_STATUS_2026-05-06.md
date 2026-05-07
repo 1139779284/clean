@@ -156,6 +156,73 @@ also revives OGA/semantic trigger sensitivity. The next algorithmic step should
 therefore be a custom matched-candidate ODA/OGA loss rather than more ordinary
 fine-tuning.
 
+Algorithm Upgrade v2 has now been integrated:
+
+```text
+model_security_gate/detox/oda_loss_v2.py
+model_security_gate/detox/pgbd_od.py
+docs/ALGORITHM_UPGRADE_V2.md
+tests/test_oda_loss_v2.py
+tests/test_pgbd_od.py
+```
+
+It adds:
+
+```text
+matched_candidate_oda_loss
+negative_target_candidate_suppression_loss
+pgbd_paired_displacement_loss
+```
+
+The strong training loop now logs:
+
+```text
+loss_oda_matched
+loss_oga_negative
+loss_pgbd_paired
+```
+
+A wiring smoke confirmed the new losses are active after fixing prototype-layer
+selection to avoid YOLO DFL layers:
+
+```text
+D:\clean_yolo\model_security_gate\runs\algorithm_v2_strong_train_wire_smoke3_2026-05-07
+
+prototype_layer: model.22.cv3.2.2
+loss_prototype sum: 0.1195
+loss_oda_matched sum: 4.5103
+loss_pgbd_paired sum: 0.6884
+```
+
+A small Hybrid smoke also completed:
+
+```text
+D:\clean_yolo\model_security_gate\runs\hybrid_algo_v2_A3_selfteacher_smoke_2026-05-07
+
+baseline/final model: A3_head_mid merge candidate
+external max ASR: 0.25
+external mean ASR: 0.125
+status: failed_external_asr_or_map
+```
+
+The smoke used self-teacher feature purification only to validate wiring; it is
+not a safety result. The phase logs showed non-zero algorithm-v2 losses:
+
+```text
+ODA phase:
+  loss_oda_matched sum: 24.50
+  loss_pgbd_paired sum: 5.73
+
+WaNet phase:
+  loss_oda_matched sum: 8.44
+  loss_oga_negative sum: 29.84
+  loss_pgbd_paired sum: 8.61
+```
+
+No candidate was accepted yet; the rollback gate kept the previous best model.
+This is the expected conservative behavior until a candidate improves external
+ASR without worsening clean metrics or any tracked attack.
+
 The latest local CUDA validation smoke is:
 
 ```text
@@ -191,6 +258,8 @@ The audit found an important ASR-definition ambiguity rather than a class-map in
 - Without a trusted clean teacher checkpoint, feature-level distillation falls back to a frozen suspicious model and should be treated only as risk reduction.
 - As of the latest code, Hybrid-PURIFY disables self-teacher feature purification by default when no trusted teacher is provided.
 - Failure-only phase fine-tuning is available as a no-teacher fallback, but the current smoke shows it can recover mAP while worsening ASR and should be treated as experimental.
+- Algorithm Upgrade v2 is integrated and wired, but current validation is still a smoke test, not proof that external max ASR can reach `<= 0.10`.
+- Prototype/PGBD layers now avoid DFL by default; if `loss_pgbd_paired` is zero in future runs, inspect `prototype_layer` and hook outputs first.
 - External ASR validation must use held-out suites where possible; using the same suite for replay and evaluation can overstate robustness.
 - The current ASR target is still unmet: `external_max_asr <= 0.10` and clean `mAP50-95` drop `<= 0.03`.
 - ODA hardening remains the most difficult failure mode. Current failure replay reduces it slightly but does not suppress it enough.
