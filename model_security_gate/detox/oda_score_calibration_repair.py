@@ -55,6 +55,7 @@ class ODAScoreCalibrationRepairConfig:
     conf: float = 0.25
     low_conf: float = 0.001
     batch: int = 3
+    letterbox_train: bool = False
     epochs: int = 8
     lr: float = 1e-5
     weight_decay: float = 1e-5
@@ -267,6 +268,7 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
         shuffle=True,
         num_workers=0,
         max_images=None,
+        letterbox=bool(cfg.letterbox_train),
     )
     optimizer = torch.optim.AdamW(student.parameters(), lr=float(cfg.lr), weight_decay=float(cfg.weight_decay))
     scaler = torch.cuda.amp.GradScaler(enabled=bool(cfg.amp and device.type == "cuda"))

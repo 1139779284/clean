@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--conf", type=float, default=0.25)
     p.add_argument("--low-conf", type=float, default=0.001)
     p.add_argument("--batch", type=int, default=3)
+    p.add_argument("--letterbox-train", action="store_true", help="Use letterbox preprocessing in the repair dataloader to match Ultralytics predict.")
     p.add_argument("--epochs", type=int, default=8)
     p.add_argument("--lr", type=float, default=1e-5)
     p.add_argument("--weight-decay", type=float, default=1e-5)
@@ -81,6 +82,7 @@ def main() -> None:
         conf=args.conf,
         low_conf=args.low_conf,
         batch=args.batch,
+        letterbox_train=args.letterbox_train,
         epochs=args.epochs,
         lr=args.lr,
         weight_decay=args.weight_decay,

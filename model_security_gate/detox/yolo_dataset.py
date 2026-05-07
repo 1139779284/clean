@@ -130,6 +130,51 @@ def _read_normalized_labels(label_path: Path) -> Tuple[np.ndarray, np.ndarray]:
     return np.asarray(cls, dtype=np.float32).reshape(-1, 1), np.asarray(boxes, dtype=np.float32).reshape(-1, 4)
 
 
+def _transform_normalized_labels_for_letterbox(
+    boxes: np.ndarray,
+    orig_shape: Tuple[int, int],
+    resized_shape: Tuple[int, int],
+    scale: Tuple[float, float],
+    pad: Tuple[float, float],
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Map normalized xywh boxes from original image space into letterbox space."""
+    if boxes.size == 0:
+        empty = boxes.reshape(-1, 4).astype(np.float32)
+        return empty, np.zeros((0,), dtype=bool)
+    orig_h, orig_w = orig_shape
+    out_h, out_w = resized_shape
+    sx, sy = scale
+    dx, dy = pad
+    b = boxes.astype(np.float32).copy()
+    x1 = (b[:, 0] - b[:, 2] / 2.0) * float(orig_w)
+    y1 = (b[:, 1] - b[:, 3] / 2.0) * float(orig_h)
+    x2 = (b[:, 0] + b[:, 2] / 2.0) * float(orig_w)
+    y2 = (b[:, 1] + b[:, 3] / 2.0) * float(orig_h)
+    x1 = x1 * float(sx) + float(dx)
+    x2 = x2 * float(sx) + float(dx)
+    y1 = y1 * float(sy) + float(dy)
+    y2 = y2 * float(sy) + float(dy)
+    x1 = np.clip(x1, 0.0, float(out_w))
+    x2 = np.clip(x2, 0.0, float(out_w))
+    y1 = np.clip(y1, 0.0, float(out_h))
+    y2 = np.clip(y2, 0.0, float(out_h))
+    w = np.maximum(x2 - x1, 0.0)
+    h = np.maximum(y2 - y1, 0.0)
+    xc = x1 + w / 2.0
+    yc = y1 + h / 2.0
+    transformed = np.stack(
+        [
+            xc / max(float(out_w), 1.0),
+            yc / max(float(out_h), 1.0),
+            w / max(float(out_w), 1.0),
+            h / max(float(out_h), 1.0),
+        ],
+        axis=1,
+    )
+    keep = (transformed[:, 2] > 0.0) & (transformed[:, 3] > 0.0)
+    return transformed[keep].astype(np.float32), keep
+
+
 class YoloDetoxDataset(Dataset):
     def __init__(
         self,
@@ -153,10 +198,19 @@ class YoloDetoxDataset(Dataset):
         if img is None:
             raise FileNotFoundError(f"Could not read image: {path}")
         orig_shape = img.shape[:2]
-        img, _scale, _pad = _letterbox_or_resize(img, self.imgsz, self.letterbox)
+        img, scale, pad = _letterbox_or_resize(img, self.imgsz, self.letterbox)
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img_t = torch.from_numpy(img_rgb.transpose(2, 0, 1)).float().contiguous() / 255.0
         cls_np, boxes_np = _read_normalized_labels(image_to_label_path(path))
+        if self.letterbox and boxes_np.size:
+            boxes_np, keep = _transform_normalized_labels_for_letterbox(
+                boxes_np,
+                orig_shape=orig_shape,
+                resized_shape=(self.imgsz, self.imgsz),
+                scale=scale,
+                pad=pad,
+            )
+            cls_np = cls_np[keep].reshape(-1, 1)
         return {
             "img": img_t,
             "cls": torch.from_numpy(cls_np),

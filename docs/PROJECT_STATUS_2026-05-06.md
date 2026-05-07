@@ -825,6 +825,71 @@ best-by-score alpha=0.25:
   rejected reason:   map_drop_too_high by about 0.00165
 ```
 
+The next optimization found an important preprocessing mismatch: the repair
+dataloader used direct resize by default, while Ultralytics `model.predict`
+uses letterbox-style inference preprocessing. The score-calibration repair CLI
+now supports:
+
+```text
+--letterbox-train
+```
+
+and the local YOLO detox dataloader correctly transforms normalized labels into
+letterboxed coordinates when this mode is enabled. This makes custom decoded
+losses closer to the same spatial distribution used by external hard-suite
+evaluation.
+
+Letterbox-aligned ODA+semantic repair:
+
+```text
+D:\clean_yolo\model_security_gate\runs\oda_semantic_joint_letterbox_2026-05-07
+
+epoch 3:
+  badnet_oda:                 0.05
+  semantic_green_cleanlabel:  0.05
+  blend_oga:                  0.00
+  wanet_oga:                  0.00
+  external max ASR:           0.05
+  external mean ASR:          0.025
+  clean mAP50-95:             0.1433
+```
+
+Directly using the letterbox-trained checkpoint still hurts clean mAP too much,
+but interpolating it back toward the mAP-preserving checkpoint gives the current
+best smoke candidate:
+
+```text
+D:\clean_yolo\model_security_gate\runs\pareto_letterbox_joint_merge_fine_2026-05-07
+
+best accepted alpha=0.08:
+  model:
+    D:\clean_yolo\model_security_gate\runs\pareto_letterbox_joint_merge_fine_2026-05-07\models\pareto_global_alpha_0p08.pt
+  external max ASR:  0.05
+  external mean ASR: 0.025
+  badnet_oda:        0.05
+  semantic:          0.05
+  blend_oga:         0.00
+  wanet_oga:         0.00
+  clean mAP50-95:    0.1703
+  mAP drop vs 0.1998 baseline: 0.0295
+```
+
+This is the strongest smoke result so far under the numeric gate:
+
+```text
+external max ASR <= 0.10: pass
+external mean ASR <= 0.05: pass
+clean mAP50-95 drop <= 0.03: pass
+```
+
+It is still not a full production/Green result because strict no-worse semantics
+are not fully satisfied: one semantic target-absent false positive remains at
+`0.05` ASR. A final polish run from `alpha=0.08` with heavier semantic guard was
+correctly rolled back because it worsened badnet_oda. The remaining research
+target is therefore very narrow: suppress the last semantic final false-positive
+without lowering the ODA target-score calibration that keeps badnet_oda at
+`0.05`.
+
 Current status after this iteration:
 
 ```text
@@ -873,7 +938,7 @@ The audit found an important ASR-definition ambiguity rather than a class-map in
 - Algorithm Upgrade v2 is integrated and wired, but current validation is still a smoke test, not proof that external max ASR can reach `<= 0.10`.
 - Prototype/PGBD layers now avoid DFL by default; if `loss_pgbd_paired` is zero in future runs, inspect `prototype_layer` and hook outputs first.
 - External ASR validation must use held-out suites where possible; using the same suite for replay and evaluation can overstate robustness.
-- The smoke-suite numerical target can now be reached (`external_max_asr <= 0.10` and clean `mAP50-95` drop `<= 0.03`), but strict per-attack no-worse acceptance is still blocked by one semantic target-absent false positive.
+- The smoke-suite numerical target can now be reached (`external_max_asr <= 0.10` and clean `mAP50-95` drop `<= 0.03`), and the current best smoke reaches `external_max_asr=0.05`; strict per-attack no-worse acceptance is still blocked by one semantic target-absent false positive.
 - ODA hardening remains the most difficult failure mode. Current failure replay reduces it slightly but does not suppress it enough.
 - ODA score calibration is the first repair that directly fixes the diagnosed target-score suppression mechanism. The remaining issue is semantic target-absent final confidence, not generic ODA replay.
 - GitHub CI is CPU/static-test oriented; real YOLO/CUDA detox runs must be validated locally.
