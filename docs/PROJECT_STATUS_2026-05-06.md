@@ -256,6 +256,29 @@ allowed as an exploratory best because it improves external ASR without tracked
 attack worsening, but it still fails final acceptance because
 `external_max_asr <= 0.10` and `mAP50-95 drop <= 0.03` are not both satisfied.
 
+An immediate Pareto interpolation check between the A3 initialization and the
+exploratory best was also run:
+
+```text
+D:\clean_yolo\model_security_gate\runs\pareto_A3_vs_selector2_smoke_2026-05-07
+```
+
+Summary on the same 20-images-per-attack smoke suite:
+
+```text
+alpha  mAP50-95  max ASR  mean ASR  badnet_oda  semantic  wanet
+0.00   0.2407    0.25     0.125     0.20        0.05      0.25
+0.25   0.2230    0.20     0.125     0.20        0.10      0.20
+0.50   0.2097    0.20     0.1125    0.20        0.10      0.15
+0.75   0.2034    0.20     0.1000    0.20        0.10      0.10
+1.00   0.1993    0.20     0.0750    0.20        0.05      0.05
+```
+
+The interpolation confirms the current bottleneck: WaNet/semantic can be
+reduced, but `badnet_oda` remains at `0.20` across the explored line, so the
+next algorithmic work should target ODA recall/box preservation rather than
+more generic interpolation.
+
 The latest local CUDA validation smoke is:
 
 ```text
