@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from model_security_gate.detox.oda_score_calibration import oda_score_calibration_loss
+from model_security_gate.detox.oda_score_calibration import oda_score_calibration_loss, semantic_negative_guard_loss
 
 
 def _batch_with_one_target() -> dict:
@@ -53,5 +53,35 @@ def test_score_calibration_loss_is_zero_without_target_labels() -> None:
     batch["batch_idx"] = torch.zeros((0,), dtype=torch.float32)
 
     loss = oda_score_calibration_loss(_prediction(0.05), batch, [0])
+
+    assert loss.item() == 0.0
+
+
+def test_semantic_negative_guard_only_applies_to_semantic_target_absent_images() -> None:
+    pred = _prediction(0.05, far_target_score=0.80).repeat(2, 1, 1)
+    batch = {
+        "img": torch.zeros((2, 3, 100, 100), dtype=torch.float32),
+        "cls": torch.tensor([[0.0]], dtype=torch.float32),
+        "bboxes": torch.tensor([[0.5, 0.5, 0.2, 0.2]], dtype=torch.float32),
+        "batch_idx": torch.tensor([1.0], dtype=torch.float32),
+        "im_file": ["external_semantic_green_cleanlabel_negative.jpg", "external_semantic_green_cleanlabel_positive.jpg"],
+    }
+
+    loss = semantic_negative_guard_loss(pred, batch, [0], semantic_keywords=("semantic",), max_target_score=0.05)
+
+    assert loss.item() > 0.0
+
+
+def test_semantic_negative_guard_skips_nonsemantic_images() -> None:
+    pred = _prediction(0.05, far_target_score=0.80)
+    batch = {
+        "img": torch.zeros((1, 3, 100, 100), dtype=torch.float32),
+        "cls": torch.zeros((0, 1), dtype=torch.float32),
+        "bboxes": torch.zeros((0, 4), dtype=torch.float32),
+        "batch_idx": torch.zeros((0,), dtype=torch.float32),
+        "im_file": ["external_blend_oga_negative.jpg"],
+    }
+
+    loss = semantic_negative_guard_loss(pred, batch, [0], semantic_keywords=("semantic",))
 
     assert loss.item() == 0.0

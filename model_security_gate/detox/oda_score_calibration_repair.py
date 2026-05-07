@@ -26,7 +26,7 @@ from model_security_gate.detox.oda_postnms_repair import (
     _select_attack_names,
     _target_ids_from_names,
 )
-from model_security_gate.detox.oda_score_calibration import oda_score_calibration_loss
+from model_security_gate.detox.oda_score_calibration import oda_score_calibration_loss, semantic_negative_guard_loss
 from model_security_gate.detox.strong_train import _torch_model, load_ultralytics_yolo, save_ultralytics_yolo
 from model_security_gate.detox.yolo_dataset import make_yolo_dataloader, move_batch_to_device
 from model_security_gate.utils.io import write_json
@@ -70,10 +70,12 @@ class ODAScoreCalibrationRepairConfig:
     guard_attack_names: Sequence[str] = field(default_factory=tuple)
     guard_replay_max_images_per_attack: int = 20
     guard_repeat: int = 8
+    guard_failure_only: bool = False
 
     lambda_score_calibration: float = 8.0
     lambda_task: float = 0.0
     lambda_oga_negative: float = 0.0
+    lambda_semantic_negative: float = 0.0
 
     score_iou_threshold: float = 0.03
     score_center_radius: float = 2.0
@@ -86,6 +88,10 @@ class ODAScoreCalibrationRepairConfig:
     score_far_margin_weight: float = 0.55
     score_competing_margin_weight: float = 0.35
     score_teacher_weight: float = 0.35
+    semantic_guard_keywords: Sequence[str] = ("semantic",)
+    semantic_negative_topk: int = 256
+    semantic_negative_max_score: float = 0.05
+    semantic_negative_margin_weight: float = 0.50
 
     max_single_attack_worsen: float = 0.02
     max_allowed_external_asr: float = 0.10
@@ -217,10 +223,15 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
         before.get("rows") or [],
     )
     guard_stats: dict[str, Any] = {"added": 0}
-    if float(cfg.lambda_oga_negative) > 0 and int(cfg.guard_replay_max_images_per_attack) > 0:
+    if (
+        (float(cfg.lambda_oga_negative) > 0 or float(cfg.lambda_semantic_negative) > 0)
+        and int(cfg.guard_replay_max_images_per_attack) > 0
+    ):
         attack_datasets = discover_external_attack_datasets(cfg.external_roots)
         guard_names = list(cfg.guard_attack_names) or [
-            ds.name for ds in attack_datasets if infer_attack_goal(ds.name if ds.goal == "auto" else ds.goal) == "oga"
+            ds.name
+            for ds in attack_datasets
+            if infer_attack_goal(ds.name if ds.goal == "auto" else ds.goal) in {"oga", "semantic"}
         ]
         if guard_names:
             guard_stats = append_external_replay_samples(
@@ -231,7 +242,8 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
                 max_images_per_attack=int(cfg.guard_replay_max_images_per_attack),
                 split="train",
                 seed=int(cfg.seed) + 17,
-                failure_only=False,
+                failure_rows=before.get("rows") or [],
+                failure_only=bool(cfg.guard_failure_only),
                 repeat=int(cfg.guard_repeat),
             )
 
@@ -260,7 +272,7 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
     scaler = torch.cuda.amp.GradScaler(enabled=bool(cfg.amp and device.type == "cuda"))
 
     log_path = out_dir / "oda_score_calibration_train_log.csv"
-    fields = ["epoch", "step", "loss_total", "loss_score_calibration", "loss_task", "loss_oga"]
+    fields = ["epoch", "step", "loss_total", "loss_score_calibration", "loss_task", "loss_oga", "loss_semantic"]
     with log_path.open("w", newline="", encoding="utf-8") as f:
         csv.DictWriter(f, fieldnames=fields).writeheader()
 
@@ -299,7 +311,21 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
                     if cfg.lambda_oga_negative > 0
                     else loss_score * 0.0
                 )
-                loss_total = loss_score + loss_task + loss_oga
+                loss_semantic = (
+                    semantic_negative_guard_loss(
+                        pred,
+                        batch,
+                        target_ids,
+                        semantic_keywords=tuple(cfg.semantic_guard_keywords),
+                        topk=int(cfg.semantic_negative_topk),
+                        max_target_score=float(cfg.semantic_negative_max_score),
+                        margin_weight=float(cfg.semantic_negative_margin_weight),
+                    )
+                    * float(cfg.lambda_semantic_negative)
+                    if cfg.lambda_semantic_negative > 0
+                    else loss_score * 0.0
+                )
+                loss_total = loss_score + loss_task + loss_oga + loss_semantic
             scaler.scale(loss_total).backward()
             if cfg.grad_clip_norm and cfg.grad_clip_norm > 0:
                 scaler.unscale_(optimizer)
@@ -315,6 +341,7 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
                         "loss_score_calibration": float(loss_score.detach().cpu().item()),
                         "loss_task": float(loss_task.detach().cpu().item()),
                         "loss_oga": float(loss_oga.detach().cpu().item()),
+                        "loss_semantic": float(loss_semantic.detach().cpu().item()),
                     }
                 )
 

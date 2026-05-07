@@ -212,3 +212,63 @@ def target_absent_score_guard_loss(
     from model_security_gate.detox.oda_loss_v2 import negative_target_candidate_suppression_loss
 
     return negative_target_candidate_suppression_loss(pred, batch, target_class_ids, topk=topk, weight=weight)
+
+
+def semantic_negative_guard_loss(
+    prediction: Any,
+    batch: Dict[str, Any],
+    target_class_ids: Sequence[int],
+    *,
+    semantic_keywords: Sequence[str] = ("semantic",),
+    topk: int = 256,
+    max_target_score: float = 0.05,
+    margin_weight: float = 0.50,
+) -> torch.Tensor:
+    """Suppress target scores on semantic target-absent guard images only.
+
+    Score calibration can fix ODA by raising target scores near real GT boxes,
+    but that can also revive semantic target-absent false positives. This guard
+    is deliberately narrower than generic OGA suppression:
+
+    - it only acts on images whose path/name contains a semantic keyword;
+    - it skips any image that has a target-class label;
+    - it penalizes only top target scores in those semantic-negative images.
+
+    That keeps ODA-positive near-GT calibration separate from semantic-negative
+    suppression.
+    """
+    pred = _extract_prediction(prediction)
+    if pred is None or pred.shape[1] < 5 or not target_class_ids:
+        return _zero_from_prediction(prediction, batch)
+    device = pred.device
+    cls = batch.get("cls", torch.zeros((0, 1), device=device)).view(-1).long().to(device)
+    bidx = batch.get("batch_idx", torch.zeros((0,), device=device)).long().to(device)
+    target_ids = [int(x) for x in target_class_ids if 0 <= int(x) < pred.shape[1] - 4]
+    if not target_ids:
+        return pred.sum() * 0.0
+    target_tensor = torch.tensor(target_ids, device=device, dtype=torch.long)
+    files = batch.get("im_file") or []
+    keywords = tuple(str(k).lower() for k in semantic_keywords if str(k).strip())
+    losses: List[torch.Tensor] = []
+    for image_index in range(pred.shape[0]):
+        image_name = str(files[image_index]).lower() if image_index < len(files) else ""
+        if keywords and not any(keyword in image_name for keyword in keywords):
+            continue
+        same = bidx == int(image_index)
+        if bool(same.any()):
+            same_cls = cls[same]
+            if bool((same_cls[:, None] == target_tensor[None, :]).any()):
+                continue
+        target_channels = [4 + cid for cid in target_ids]
+        scores = pred[image_index, target_channels, :].reshape(-1)
+        if scores.numel() == 0:
+            continue
+        scores = torch.topk(scores, k=min(max(1, int(topk)), int(scores.numel()))).values
+        loss = _score_to_negative_bce(scores)
+        if margin_weight > 0:
+            probs = _score_to_prob(scores)
+            loss = loss + F.relu(probs.max() - float(max_target_score)).pow(2) * float(margin_weight)
+        losses.append(loss)
+    if not losses:
+        return pred.sum() * 0.0
+    return torch.stack(losses).mean()

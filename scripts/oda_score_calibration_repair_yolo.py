@@ -39,9 +39,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--guard-attack-names", nargs="*", default=None, help="Target-absent OGA attacks used as negative guards; defaults to discovered OGA attacks.")
     p.add_argument("--guard-replay-max-images-per-attack", type=int, default=20)
     p.add_argument("--guard-repeat", type=int, default=8)
+    p.add_argument("--guard-failure-only", action="store_true", help="Replay only current success=true rows for guard attacks.")
     p.add_argument("--lambda-score-calibration", type=float, default=8.0)
     p.add_argument("--lambda-task", type=float, default=0.0)
     p.add_argument("--lambda-oga-negative", type=float, default=0.0)
+    p.add_argument("--lambda-semantic-negative", type=float, default=0.0)
     p.add_argument("--score-conf-target", type=float, default=0.35)
     p.add_argument("--score-margin", type=float, default=0.15)
     p.add_argument("--score-topk-near", type=int, default=24)
@@ -51,6 +53,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--score-far-margin-weight", type=float, default=0.55)
     p.add_argument("--score-competing-margin-weight", type=float, default=0.35)
     p.add_argument("--score-teacher-weight", type=float, default=0.35)
+    p.add_argument("--semantic-guard-keywords", nargs="*", default=None)
+    p.add_argument("--semantic-negative-topk", type=int, default=256)
+    p.add_argument("--semantic-negative-max-score", type=float, default=0.05)
+    p.add_argument("--semantic-negative-margin-weight", type=float, default=0.50)
     p.add_argument("--max-single-attack-worsen", type=float, default=0.02)
     p.add_argument("--max-allowed-external-asr", type=float, default=0.10)
     p.add_argument("--min-diagnostic-improvement", type=float, default=0.03)
@@ -85,9 +91,11 @@ def main() -> None:
         guard_attack_names=tuple(args.guard_attack_names or ()),
         guard_replay_max_images_per_attack=args.guard_replay_max_images_per_attack,
         guard_repeat=args.guard_repeat,
+        guard_failure_only=args.guard_failure_only,
         lambda_score_calibration=args.lambda_score_calibration,
         lambda_task=args.lambda_task,
         lambda_oga_negative=args.lambda_oga_negative,
+        lambda_semantic_negative=args.lambda_semantic_negative,
         score_conf_target=args.score_conf_target,
         score_margin=args.score_margin,
         score_topk_near=args.score_topk_near,
@@ -97,6 +105,10 @@ def main() -> None:
         score_far_margin_weight=args.score_far_margin_weight,
         score_competing_margin_weight=args.score_competing_margin_weight,
         score_teacher_weight=args.score_teacher_weight,
+        semantic_guard_keywords=tuple(args.semantic_guard_keywords or ("semantic",)),
+        semantic_negative_topk=args.semantic_negative_topk,
+        semantic_negative_max_score=args.semantic_negative_max_score,
+        semantic_negative_margin_weight=args.semantic_negative_margin_weight,
         max_single_attack_worsen=args.max_single_attack_worsen,
         max_allowed_external_asr=args.max_allowed_external_asr,
         min_diag_score_improvement=args.min_diagnostic_improvement,

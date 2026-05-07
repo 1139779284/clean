@@ -756,6 +756,85 @@ original unpurified baseline instead of the already Pareto-clean initialization.
 For safety-critical acceptance, keep the stricter no-worse gate.
 ```
 
+Follow-up semantic-guard work on 2026-05-07 found a wiring bug in the
+score-calibration repair entry point: guard replay was only built when
+`lambda_oga_negative > 0`, so `semantic-only` guard runs had
+`guard_stats.added=0` and `loss_semantic=0`. The repair now builds guard replay
+when either OGA or semantic negative loss is enabled, and the CLI supports
+semantic-specific target-absent guarding:
+
+```text
+--lambda-semantic-negative
+--semantic-guard-keywords
+--semantic-negative-topk
+--semantic-negative-max-score
+--semantic-negative-margin-weight
+--guard-failure-only
+```
+
+The corrected semantic failure-only smoke confirmed that semantic guard samples
+are now actually used:
+
+```text
+D:\clean_yolo\model_security_gate\runs\semantic_failure_only_stage2_fixed_2026-05-07
+
+guard_stats.added: 96
+loss_semantic: non-zero
+semantic false-positive conf: 0.453 -> 0.402
+```
+
+Semantic-only suppression did not fully clear the false positive and worsened
+badnet_oda (`0.10 -> 0.15`), so the next run combined ODA score anchoring with
+semantic target-absent suppression:
+
+```text
+D:\clean_yolo\model_security_gate\runs\oda_semantic_joint_stage2_2026-05-07
+
+epoch 5:
+  badnet_oda:                 0.05
+  semantic_green_cleanlabel:  0.05
+  blend_oga:                  0.00
+  wanet_oga:                  0.00
+  external max ASR:           0.05
+  external mean ASR:          0.025
+  clean mAP50-95:             0.1534
+```
+
+This proves the joint loss can push external ASR below `0.10`, but the direct
+checkpoint is not accepted because mAP drops too much versus the Pareto input.
+A follow-up interpolation between the mAP-preserving score-calibrated candidate
+and the lower-ASR joint candidate produced the current best smoke trade-off:
+
+```text
+D:\clean_yolo\model_security_gate\runs\pareto_semantic_joint_merge_fine_2026-05-07
+
+accepted alpha=0.05:
+  external max ASR:  0.10
+  external mean ASR: 0.0375
+  badnet_oda:        0.10
+  semantic:          0.05
+  blend_oga:         0.00
+  wanet_oga:         0.00
+  clean mAP50-95:    0.1715
+  mAP drop vs 0.1998 baseline: 0.0283
+
+best-by-score alpha=0.25:
+  external max ASR:  0.05
+  external mean ASR: 0.025
+  clean mAP50-95:    0.1681
+  rejected reason:   map_drop_too_high by about 0.00165
+```
+
+Current status after this iteration:
+
+```text
+The numerical ASR/mAP gate is reachable on the 20-image-per-attack smoke suite.
+The strictest no-worse policy is still blocked by one semantic target-absent
+false positive at ASR 0.05. Additional semantic suppression should target final
+detections / post-NMS confidence, because the current raw top-k guard reduces
+the confidence but does not push it below the deployment threshold.
+```
+
 The latest local CUDA validation smoke is:
 
 ```text
@@ -794,9 +873,9 @@ The audit found an important ASR-definition ambiguity rather than a class-map in
 - Algorithm Upgrade v2 is integrated and wired, but current validation is still a smoke test, not proof that external max ASR can reach `<= 0.10`.
 - Prototype/PGBD layers now avoid DFL by default; if `loss_pgbd_paired` is zero in future runs, inspect `prototype_layer` and hook outputs first.
 - External ASR validation must use held-out suites where possible; using the same suite for replay and evaluation can overstate robustness.
-- The current ASR target is still unmet: `external_max_asr <= 0.10` and clean `mAP50-95` drop `<= 0.03`.
+- The smoke-suite numerical target can now be reached (`external_max_asr <= 0.10` and clean `mAP50-95` drop `<= 0.03`), but strict per-attack no-worse acceptance is still blocked by one semantic target-absent false positive.
 - ODA hardening remains the most difficult failure mode. Current failure replay reduces it slightly but does not suppress it enough.
-- The ODA recall loss is a stronger training signal and has passed CUDA smoke validation, but current results are still far from the required ASR threshold.
+- ODA score calibration is the first repair that directly fixes the diagnosed target-score suppression mechanism. The remaining issue is semantic target-absent final confidence, not generic ODA replay.
 - GitHub CI is CPU/static-test oriented; real YOLO/CUDA detox runs must be validated locally.
 - Full datasets, run directories, and large transient model artifacts are intentionally not committed.
 - ODA ASR must be reported with its explicit success mode. Do not compare old runs unless `oda_success_mode` is the same.
