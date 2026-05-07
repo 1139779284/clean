@@ -457,6 +457,56 @@ step should use the `0.15` candidate as an initialization for deterministic
 failure-only matched-candidate repair, rather than repeating broad feature
 purification from the older `0.20` baseline.
 
+### 2026-05-07 Targeted Failure-Only Repair Smoke
+
+New code adds a deterministic targeted repair entry point:
+
+```text
+scripts/targeted_repair_yolo.py
+model_security_gate/detox/targeted_repair.py
+```
+
+This path runs external hard-suite evaluation on the input model, builds a
+small YOLO training set from only the current `success=true` failed samples,
+adds optional clean anchors, trains with ODA-v2 / OGA-negative losses, then
+re-evaluates all saved candidate checkpoints. A safety fix ensures that if all
+candidates are blocked by per-attack ASR worsening, `final_model` is explicitly
+rolled back to the input model rather than pointing to the bad candidate.
+
+CUDA smoke:
+
+```text
+D:\clean_yolo\model_security_gate\runs\targeted_oda_repair_from_pareto015_smoke_2026-05-07
+D:\clean_yolo\model_security_gate\runs\targeted_oda_repair_rollback_check_2026-05-07
+```
+
+Inputs:
+
+```text
+start model: pareto_upgrade_smoke_2026-05-07\models\pareto_global_alpha_1p0.pt
+repair goal: badnet_oda only
+baseline external max ASR: 0.15
+baseline external mean ASR: 0.075
+```
+
+Result:
+
+```text
+failure-only replay added: 72 badnet_oda samples in the 3-epoch smoke
+candidate external max ASR: worsened to 0.20
+rollback-check candidate external max ASR: worsened to 0.25
+manifest final_model: correctly rolled back to the input 0.15 model
+status: failed_external_asr_or_worsening
+```
+
+Conclusion: the deterministic repair CLI and rollback safety are useful and
+tested, but the current ODA-v2 supervised repair still worsens the external
+ODA/WaNet smoke instead of reducing ASR below `0.10`. This strongly suggests
+the remaining bottleneck is not a pipeline/selection bug; the next useful
+algorithmic step is to change the optimization target itself, likely by
+directly optimizing post-NMS localized recall or by generating attack-preserving
+positive pairs rather than repeating the same ODA failed images.
+
 The latest local CUDA validation smoke is:
 
 ```text
