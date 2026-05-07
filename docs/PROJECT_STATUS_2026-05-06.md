@@ -561,6 +561,117 @@ or worsen ODA, the next algorithmic step should inspect pre-NMS candidate
 ranking vs. final adapter detections and implement a detector-version-specific
 NMS/ranking proxy or attack-preserving positive-pair distillation.
 
+### 2026-05-07 ODA Candidate Diagnostics
+
+New diagnostic code:
+
+```text
+model_security_gate/detox/oda_candidate_diagnostics.py
+scripts/diagnose_oda_candidates.py
+tests/test_oda_candidate_diagnostics.py
+```
+
+The diagnostic checks the same ODA failure images at three levels:
+
+```text
+normal final detections at conf=0.25
+low-confidence post-NMS detections at conf=0.001
+raw decoded target candidates near each GT target before final filtering
+```
+
+It was run on the current best Pareto candidate:
+
+```text
+model:
+  D:\clean_yolo\model_security_gate\runs\pareto_upgrade_smoke_2026-05-07\models\pareto_global_alpha_1p0.pt
+
+output:
+  D:\clean_yolo\model_security_gate\runs\oda_candidate_diag_pareto015_2026-05-07
+
+external suite:
+  D:\clean_yolo\poison_benchmark_cuda_tuned
+```
+
+External ASR for that candidate on the 20-image smoke set:
+
+```text
+badnet_oda:                 0.15
+wanet_oga:                  0.15
+blend_oga:                  0.00
+semantic_green_cleanlabel:  0.00
+max ASR:                    0.15
+mean ASR:                   0.075
+```
+
+For the three remaining `badnet_oda` failures:
+
+```text
+lowconf_recalled_rate:              0.3333
+raw_any_near_gt_rate:               1.0000
+raw_near_gt_over_conf_rate:         0.0000
+raw_near_gt_best_target_score_mean: 0.1020
+```
+
+Row-level evidence:
+
+```text
+attack_0001_helm_004555.jpg:
+  GT targets: 14
+  normal target detections: 0
+  low-conf target recall: 0
+  raw near-GT candidates: 178
+  raw near-GT best score: 0.1198
+  raw near-GT best IoU: 0.6516
+
+attack_0006_helm_013742.jpg:
+  GT targets: 1
+  normal target detections: 0
+  low-conf target recall: 0
+  raw near-GT candidates: 522
+  raw near-GT best score: 0.0202
+  raw near-GT best IoU: 0.7807
+
+attack_0016_helm_015864.jpg:
+  GT targets: 1
+  normal target detections: 0
+  low-conf target recall: 1
+  low-conf best score: 0.0197
+  raw near-GT candidates: 32
+  raw near-GT best score: 0.1659
+  raw near-GT best IoU: 0.7202
+```
+
+A comparison run on the original `D:\clean_yolo\best.pt` showed:
+
+```text
+badnet_oda ASR:                       0.80
+raw_any_near_gt_rate:                 1.0000
+raw_near_gt_over_conf_rate:           0.3750
+raw_near_gt_best_target_score_mean:   0.3161
+```
+
+Interpretation:
+
+```text
+The remaining ODA failures are not primarily "no local box candidate exists."
+Raw decoded boxes near GT targets do exist and often have good localization.
+The residual failure is mostly target-score suppression / candidate ranking:
+near-GT helmet candidates stay far below the conf=0.25 operating threshold.
+Post-NMS repair did not help because it optimized the same few failure images
+but did not reliably lift localized target scores; after repair, the best
+epoch still had raw near-GT over-conf rate 0.0 and was rolled back.
+```
+
+Next algorithmic direction:
+
+```text
+Implement a score-calibration / ranking-focused ODA repair:
+  1. optimize near-GT candidate target logits directly against teacher/clean views;
+  2. add attack-preserving positive-pair distillation instead of only replaying failures;
+  3. avoid broad clean recovery that lowers target logits on the same hard positives;
+  4. evaluate with this diagnostic after every candidate, not only external ASR.
+```
+
 The latest local CUDA validation smoke is:
 
 ```text
