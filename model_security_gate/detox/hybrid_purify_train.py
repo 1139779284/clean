@@ -62,6 +62,7 @@ class HybridPurifyConfig:
     external_oda_success_mode: str = "localized_any_recalled"
     external_failure_replay: bool = True
     external_failure_replay_repeat: int = 4
+    external_oda_full_image_extra_repeat: int = 0
     external_oda_focus_crops: bool = False
     external_oda_focus_crop_repeat: int = 2
     external_oda_focus_crop_context: float = 3.0
@@ -150,6 +151,8 @@ class HybridPurifyConfig:
     worse_attack_penalty: float = 2.5
     oda_worse_penalty: float = 3.0
     min_selection_improvement: float = 0.005
+    min_external_asr_improvement: float = 1e-6
+    min_external_mean_improvement: float = 0.01
 
     attack_specs: Sequence[AttackTransformConfig] = field(default_factory=lambda: default_attack_suite())
 
@@ -517,6 +520,30 @@ def _candidate_block_reasons(item: Mapping[str, Any], cfg: HybridPurifyConfig) -
     return reasons
 
 
+def _candidate_improved(item: Mapping[str, Any], best_item: Mapping[str, Any], cfg: HybridPurifyConfig) -> bool:
+    """Decide whether a candidate should replace the current best.
+
+    Aggregate score remains the main selector, but external ASR is the safety
+    signal that matters most. If max ASR is unchanged and mean external ASR
+    clearly drops, accept the candidate even when the scalar score improvement
+    is slightly below the global hysteresis threshold.
+    """
+    score_delta = float(best_item["selection_score"]) - float(item["selection_score"])
+    if score_delta > float(cfg.min_selection_improvement):
+        return True
+    try:
+        best_max = float(best_item.get("external_max_asr", 0.0))
+        item_max = float(item.get("external_max_asr", 0.0))
+        best_mean = float(best_item.get("external_mean_asr", 0.0))
+        item_mean = float(item.get("external_mean_asr", 0.0))
+    except (TypeError, ValueError):
+        return False
+    if best_max - item_max > float(cfg.min_external_asr_improvement):
+        return True
+    same_max = abs(best_max - item_max) <= max(float(cfg.min_external_asr_improvement), 1e-9)
+    return bool(same_max and best_mean - item_mean >= float(cfg.min_external_mean_improvement))
+
+
 def run_hybrid_purify_detox_yolo(
     model_path: str | Path,
     images_dir: str | Path,
@@ -698,7 +725,7 @@ def run_hybrid_purify_detox_yolo(
 
         block_reasons = _candidate_block_reasons(item, cfg)
         blocked = bool(block_reasons)
-        improved = item["selection_score"] < float(best_item["selection_score"]) - float(cfg.min_selection_improvement)
+        improved = _candidate_improved(item, best_item, cfg)
         public_item = {k: v for k, v in item.items() if k != "_evals"}
         public_item["blocked"] = blocked
         public_item["block_reasons"] = block_reasons
@@ -752,7 +779,7 @@ def run_hybrid_purify_detox_yolo(
             rnp_item = evaluate_candidate(Path(rnp_model), tag="00_rnp_candidate", cycle_info={"phase": "rnp_candidate", "score_csv": str(score_csv)})
             rnp_item["cycle"] = 0
             manifest["rnp_candidate"] = {k: v for k, v in rnp_item.items() if k != "_evals"}
-            improved = rnp_item["selection_score"] < float(best_item["selection_score"]) - float(cfg.min_selection_improvement)
+            improved = _candidate_improved(rnp_item, best_item, cfg)
             block_reasons = _candidate_block_reasons(rnp_item, cfg)
             blocked = bool(block_reasons)
             if improved and not blocked:
@@ -791,6 +818,7 @@ def run_hybrid_purify_detox_yolo(
             external_failure_replay_repeat=int(
                 cfg.aggressive_failure_replay_repeat if cfg.aggressive_mode else cfg.external_failure_replay_repeat
             ),
+            external_oda_full_image_extra_repeat=int(cfg.external_oda_full_image_extra_repeat),
             external_oda_focus_crops=bool(cfg.external_oda_focus_crops),
             external_oda_focus_crop_repeat=int(cfg.external_oda_focus_crop_repeat),
             external_oda_focus_crop_context=float(cfg.external_oda_focus_crop_context),

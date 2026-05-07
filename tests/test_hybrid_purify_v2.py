@@ -1,4 +1,4 @@
-from model_security_gate.detox.hybrid_purify_train import HybridPurifyConfig, compare_asr_matrices, _candidate_block_reasons, _hybrid_selection_score
+from model_security_gate.detox.hybrid_purify_train import HybridPurifyConfig, compare_asr_matrices, _candidate_block_reasons, _candidate_improved, _hybrid_selection_score
 from model_security_gate.detox.external_hard_suite import score_for_attack_name
 from model_security_gate.detox.rnp import RNPConfig
 
@@ -30,6 +30,13 @@ def test_hybrid_selection_uses_selection_map_drop_for_exploration():
     baseline = _hybrid_selection_score(0.25, 0.59, 0.125, 0.0, {"worse": []}, cfg)
     external_better = _hybrid_selection_score(0.20, 0.72, 0.075, 0.042, {"worse": []}, cfg)
     assert external_better < baseline
+
+
+def test_candidate_improved_accepts_same_max_lower_external_mean():
+    cfg = HybridPurifyConfig(min_selection_improvement=0.005, min_external_mean_improvement=0.01)
+    best = {"selection_score": 0.3316, "external_max_asr": 0.20, "external_mean_asr": 0.075}
+    candidate = {"selection_score": 0.3290, "external_max_asr": 0.20, "external_mean_asr": 0.0625}
+    assert _candidate_improved(candidate, best, cfg)
 
 
 def test_candidate_block_reasons_report_map_and_attack_failures():

@@ -538,6 +538,7 @@ def append_external_replay_samples(
     failure_rows: Sequence[Mapping[str, Any]] | None = None,
     failure_only: bool = False,
     repeat: int = 1,
+    oda_full_image_extra_repeat: int = 0,
     oda_focus_crops: bool = False,
     oda_focus_crop_repeat: int = 2,
     oda_focus_crop_context: float = 3.0,
@@ -568,6 +569,8 @@ def append_external_replay_samples(
         "n_failure_basenames": len(failed_basenames),
         "n_failure_attacks": len(failed_attacks),
         "repeat": max(1, int(repeat)),
+        "oda_full_image_extra_repeat": max(0, int(oda_full_image_extra_repeat)),
+        "oda_full_images_added": 0,
         "oda_focus_crops": bool(oda_focus_crops),
         "oda_focus_crops_added": 0,
         "oda_focus_crop_repeat": max(1, int(oda_focus_crop_repeat)),
@@ -600,7 +603,10 @@ def append_external_replay_samples(
             if goal == "oda" and not has_t:
                 stats["skipped"] += 1
                 continue
-            for rep in range(max(1, int(repeat))):
+            full_repeat = max(1, int(repeat))
+            if goal == "oda":
+                full_repeat += max(0, int(oda_full_image_extra_repeat))
+            for rep in range(full_repeat):
                 stem = f"external_{ds.suite or 'suite'}_{ds.name}_{path.stem}_r{rep:02d}".replace(" ", "_")
                 dest_img = img_out / f"{stem}{path.suffix.lower() if path.suffix else '.jpg'}"
                 dest_lab = lab_out / f"{stem}.txt"
@@ -610,6 +616,8 @@ def append_external_replay_samples(
                     write_image(dest_img, img)
                 write_yolo_labels(dest_lab, labels, img.shape)
                 stats["added"] += 1
+                if goal == "oda":
+                    stats["oda_full_images_added"] += 1
                 stats["by_attack"][ds.name] = int(stats["by_attack"].get(ds.name, 0)) + 1
             if bool(oda_focus_crops) and goal == "oda":
                 crops_added = _append_oda_focus_crops(

@@ -37,6 +37,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--external-eval-max-images-per-attack", type=int, default=None)
     p.add_argument("--external-replay-max-images-per-attack", type=int, default=None)
     p.add_argument("--external-failure-replay-repeat", type=int, default=None)
+    p.add_argument("--external-oda-full-image-extra-repeat", type=int, default=None, help="Extra full-image repeats for ODA failure replay, preserving trigger/context")
     p.add_argument("--external-oda-focus-crops", action="store_true", default=None, help="Add target-centered crops for ODA failure replay samples")
     p.add_argument("--external-oda-focus-crop-repeat", type=int, default=None)
     p.add_argument("--external-oda-focus-crop-context", type=float, default=None)
@@ -93,6 +94,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--allow-attack-worse", action="store_true", default=None, help="Allow candidates that worsen a single external attack; not recommended")
     p.add_argument("--max-single-attack-asr-worsen", type=float, default=None)
     p.add_argument("--external-mean-asr-weight", type=float, default=None)
+    p.add_argument("--min-external-asr-improvement", type=float, default=None)
+    p.add_argument("--min-external-mean-improvement", type=float, default=None)
     return p.parse_args()
 
 

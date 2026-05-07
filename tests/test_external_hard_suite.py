@@ -232,3 +232,31 @@ def test_oda_focus_crop_replay_adds_target_centered_labels(tmp_path: Path):
     assert first_label[0] == "0"
     assert 0.45 <= float(first_label[1]) <= 0.55
     assert 0.45 <= float(first_label[2]) <= 0.55
+
+
+def test_oda_full_image_extra_repeat_preserves_failed_context(tmp_path: Path):
+    root = tmp_path / "bench"
+    img = root / "data" / "badnet_oda" / "images" / "val" / "failed.jpg"
+    lab = root / "data" / "badnet_oda" / "labels" / "val" / "failed.txt"
+    _write_img(img)
+    lab.parent.mkdir(parents=True, exist_ok=True)
+    lab.write_text("0 0.500000 0.500000 0.400000 0.400000\n", encoding="utf-8")
+
+    datasets = discover_external_attack_datasets([root])
+    out = tmp_path / "detox_ds"
+    stats = append_external_replay_samples(
+        output_dataset_dir=out,
+        attack_datasets=datasets,
+        target_class_ids=[0],
+        selected_attack_names=["badnet_oda"],
+        failure_rows=[{"image": str(img), "attack": "badnet_oda", "success": True}],
+        failure_only=True,
+        repeat=2,
+        oda_full_image_extra_repeat=3,
+    )
+
+    full_images = sorted((out / "images" / "train").glob("external_bench_badnet_oda_failed_r*.jpg"))
+    assert stats["added"] == 5
+    assert stats["oda_full_images_added"] == 5
+    assert stats["oda_full_image_extra_repeat"] == 3
+    assert len(full_images) == 5

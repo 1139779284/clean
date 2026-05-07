@@ -350,6 +350,62 @@ remove or weaken the global trigger/context responsible for ODA disappearance.
 Next work should combine target crops with trigger-preserving context or a
 decoded-candidate objective evaluated directly on the full failed image.
 
+### 2026-05-07 ODA Full-Image Replay and Selector Smoke
+
+New code adds optional ODA full-image extra replay:
+
+```text
+external_oda_full_image_extra_repeat
+```
+
+For ODA phases, this repeats the exact current external `success=true` failed
+full images before feature purification. Unlike target-centered focus crops,
+this preserves the global trigger/context and the original YOLO labels. The
+candidate selector was also relaxed so that a phase candidate can be accepted
+when external max ASR is unchanged but external mean ASR improves enough.
+
+CUDA smoke:
+
+```text
+D:\clean_yolo\model_security_gate\runs\oda_full_image_repair_selector2_smoke_2026-05-07
+```
+
+Result:
+
+```text
+baseline external max ASR: 0.20
+baseline external mean ASR: 0.075
+ODA hardening replay added: 224 full-image samples
+ODA full-image extra repeat: 48
+best ODA phase candidate max ASR: 0.20
+best ODA phase candidate mean ASR: 0.0625
+badnet_oda: stayed at 0.20
+semantic_green_cleanlabel: 0.05 -> 0.00
+clean mAP50-95: about 0.202
+```
+
+The first full-image replay smoke showed a small mean-ASR improvement, but it
+did not reduce the bottleneck `badnet_oda` max ASR. A repeat run after the
+selector fix was not stable:
+
+```text
+D:\clean_yolo\model_security_gate\runs\oda_full_image_selector_fix_smoke_2026-05-07
+
+best ODA phase candidate max ASR: 0.25
+last ODA phase candidate max ASR: 0.35
+clean recovery candidate max ASR: 0.20
+clean recovery candidate mean ASR: 0.0875
+final model: rolled back to prior baseline
+```
+
+Conclusion: full-image ODA replay and mean-ASR-aware selection are useful
+infrastructure and covered by tests, but this route is not yet a successful
+detox algorithm. The current best smoke candidate remains at external max ASR
+`0.20`, so the project still misses the target `<= 0.10`. Future work should
+use this replay mechanism inside a more deterministic matched-candidate repair
+or a Pareto/layer-merge initialization instead of relying on another random
+feature-purification repeat.
+
 The latest local CUDA validation smoke is:
 
 ```text

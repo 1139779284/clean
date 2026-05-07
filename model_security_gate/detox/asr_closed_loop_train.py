@@ -78,6 +78,7 @@ class ASRClosedLoopConfig:
     stop_on_pass: bool = True
     external_failure_replay: bool = True
     external_failure_replay_repeat: int = 4
+    external_oda_full_image_extra_repeat: int = 0
     external_oda_focus_crops: bool = False
     external_oda_focus_crop_repeat: int = 2
     external_oda_focus_crop_context: float = 3.0
@@ -280,6 +281,7 @@ def _build_phase_dataset(
             failure_rows=failure_rows,
             failure_only=bool(cfg.external_failure_replay),
             repeat=max(1, int(cfg.external_failure_replay_repeat if cfg.external_failure_replay else 1)),
+            oda_full_image_extra_repeat=int(getattr(cfg, "external_oda_full_image_extra_repeat", 0)),
             oda_focus_crops=bool(getattr(cfg, "external_oda_focus_crops", False)),
             oda_focus_crop_repeat=int(getattr(cfg, "external_oda_focus_crop_repeat", 2)),
             oda_focus_crop_context=float(getattr(cfg, "external_oda_focus_crop_context", 3.0)),
