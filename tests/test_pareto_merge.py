@@ -4,10 +4,12 @@ import torch
 
 from model_security_gate.detox.pareto_merge import (
     alpha_for_state_key,
+    generate_group_layer_alpha_specs,
     interpolate_state_dicts,
     layer_index_for_state_key,
     parse_alpha_grid,
     parse_layer_alpha_spec,
+    parse_named_layer_alpha_specs,
 )
 
 
@@ -25,6 +27,21 @@ def test_layer_alpha_override() -> None:
     assert alpha_for_state_key("model.3.conv.weight", 0.5, spec) == 0.2
     assert alpha_for_state_key("model.22.conv.weight", 0.5, spec) == 0.8
     assert alpha_for_state_key("other.weight", 0.5, spec) == 0.5
+
+
+def test_parse_named_layer_alpha_specs() -> None:
+    specs = parse_named_layer_alpha_specs("head_high::0-9:0.1,10-21:0.3,22-999:0.8|0-9:0.8,10-999:0.2")
+    assert [s.name for s in specs] == ["head_high", "layer_2"]
+    assert specs[0].alpha_by_layer["22-999"] == 0.8
+    assert specs[1].alpha_by_layer["0-9"] == 0.8
+
+
+def test_generate_group_layer_alpha_specs_prioritizes_layer_grafts() -> None:
+    specs = generate_group_layer_alpha_specs([0.0, 0.5, 1.0], max_candidates=4)
+    assert len(specs) == 4
+    assert all({"0-9", "10-21", "22-999"} <= set(spec.alpha_by_layer) for spec in specs)
+    # The generator should put high-spread layer grafts before all-mid/all-same candidates.
+    assert max(specs[0].alpha_by_layer.values()) - min(specs[0].alpha_by_layer.values()) == 1.0
 
 
 def test_interpolate_state_dicts_keeps_non_float_buffers() -> None:

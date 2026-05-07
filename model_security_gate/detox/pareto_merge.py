@@ -31,6 +31,12 @@ class MergeReport:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class NamedLayerAlphaSpec:
+    name: str
+    alpha_by_layer: Dict[str, float]
+
+
 def parse_alpha_grid(value: str | None) -> list[float]:
     if not value:
         return [round(x / 20.0, 4) for x in range(0, 21)]
@@ -40,6 +46,11 @@ def parse_alpha_grid(value: str | None) -> list[float]:
         if alpha < 0.0 or alpha > 1.0:
             raise ValueError(f"alpha must be in [0, 1], got {alpha}")
     return alphas
+
+
+def _safe_spec_name(value: str, fallback: str) -> str:
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip()).strip("_")
+    return name or fallback
 
 
 def parse_layer_alpha_spec(spec: str | None) -> Dict[str, float]:
@@ -70,6 +81,78 @@ def parse_layer_alpha_spec(spec: str | None) -> Dict[str, float]:
             raise ValueError(f"layer alpha must be in [0, 1], got {alpha}")
         _parse_layer_range(key.strip())
         out[key.strip()] = alpha
+    return out
+
+
+def parse_named_layer_alpha_specs(value: str | None) -> list[NamedLayerAlphaSpec]:
+    """Parse one or more fixed layer-alpha specs.
+
+    Candidate specs are separated with ``|``. Each candidate may optionally use
+    ``name::spec``. Example:
+
+    ``"head_high::0-9:0.1,10-21:0.4,22-999:0.8|backbone_high::0-9:0.8,10-999:0.2"``
+    """
+    if not value:
+        return []
+    specs: list[NamedLayerAlphaSpec] = []
+    for idx, raw in enumerate(value.split("|"), start=1):
+        item = raw.strip()
+        if not item:
+            continue
+        if "::" in item:
+            name, spec = item.split("::", 1)
+            safe_name = _safe_spec_name(name, f"layer_{idx}")
+        else:
+            spec = item
+            safe_name = f"layer_{idx}"
+        specs.append(NamedLayerAlphaSpec(name=safe_name, alpha_by_layer=parse_layer_alpha_spec(spec)))
+    return specs
+
+
+def generate_group_layer_alpha_specs(
+    group_alphas: Sequence[float],
+    *,
+    backbone_range: str = "0-9",
+    neck_range: str = "10-21",
+    head_range: str = "22-999",
+    max_candidates: int | None = None,
+) -> list[NamedLayerAlphaSpec]:
+    """Generate coarse YOLO backbone/neck/head layer interpolation specs.
+
+    The order is deterministic and prioritizes candidates where at least one
+    group is close to the ASR-suppressing source model and one group is close
+    to the mAP-preserving base model. This gives useful coarse layer-graft
+    probes without requiring a huge full grid by default.
+    """
+    alphas = [float(a) for a in group_alphas]
+    for alpha in alphas:
+        if alpha < 0.0 or alpha > 1.0:
+            raise ValueError(f"group alpha must be in [0, 1], got {alpha}")
+
+    candidates: list[tuple[float, NamedLayerAlphaSpec]] = []
+    for backbone_alpha in alphas:
+        for neck_alpha in alphas:
+            for head_alpha in alphas:
+                spread = max(backbone_alpha, neck_alpha, head_alpha) - min(backbone_alpha, neck_alpha, head_alpha)
+                source_strength = backbone_alpha + neck_alpha + head_alpha
+                name = (
+                    f"bb{str(backbone_alpha).replace('.', 'p')}_"
+                    f"neck{str(neck_alpha).replace('.', 'p')}_"
+                    f"head{str(head_alpha).replace('.', 'p')}"
+                )
+                spec = {
+                    backbone_range: float(backbone_alpha),
+                    neck_range: float(neck_alpha),
+                    head_range: float(head_alpha),
+                }
+                # High spread first, then mid-strength candidates. Pure all-0
+                # or all-1 are already covered by global alpha search.
+                priority = (-spread, abs(source_strength - 1.5), source_strength)
+                candidates.append((priority, NamedLayerAlphaSpec(name=name, alpha_by_layer=spec)))  # type: ignore[arg-type]
+    candidates.sort(key=lambda item: item[0])
+    out = [spec for _, spec in candidates]
+    if max_candidates is not None and max_candidates > 0:
+        return out[: int(max_candidates)]
     return out
 
 

@@ -406,6 +406,57 @@ use this replay mechanism inside a more deterministic matched-candidate repair
 or a Pareto/layer-merge initialization instead of relying on another random
 feature-purification repeat.
 
+### 2026-05-07 Pareto Merge Search Upgrade
+
+The Pareto merge tool was upgraded to support:
+
+```text
+multiple fixed layer-alpha specs
+coarse backbone/neck/head layer-grid candidates
+automatic pareto_merge_best.json selection output
+acceptance thresholds for external ASR and clean mAP drop
+configurable score weights for max ASR / mean ASR / mAP
+```
+
+This makes the "merge a low-ASR model with a higher-mAP model" route
+reproducible instead of manually launching many one-off scripts.
+
+CUDA smoke:
+
+```text
+D:\clean_yolo\model_security_gate\runs\pareto_upgrade_smoke_2026-05-07
+```
+
+Inputs:
+
+```text
+base:   hybrid_algo_v2_A3_explore_tolerant_selector2 clean-recovery candidate
+source: pareto_layer_merge_true_strong_tiny A_head_high candidate
+eval:   poison_benchmark_cuda_tuned, 20 images per attack
+```
+
+Result:
+
+```text
+best external max ASR: 0.15
+best external mean ASR: 0.075
+best model: pareto_global_alpha_1p0.pt
+best clean mAP50-95: 0.1998
+
+best layer-graft candidate:
+  pareto_head_high_alpha_0p0.pt
+  external max ASR: 0.20
+  external mean ASR: 0.0625
+  clean mAP50-95: 0.2014
+```
+
+Conclusion: Pareto/layer merge is now easier to run and can recover a better
+initialization than the current `0.20` smoke baseline, but this specific search
+still does not hit the target external max ASR `<= 0.10`. The next algorithmic
+step should use the `0.15` candidate as an initialization for deterministic
+failure-only matched-candidate repair, rather than repeating broad feature
+purification from the older `0.20` baseline.
+
 The latest local CUDA validation smoke is:
 
 ```text
