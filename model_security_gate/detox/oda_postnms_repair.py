@@ -243,6 +243,15 @@ def _device_from_string(value: str | None) -> torch.device:
     return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
+def _decoded_forward(model: torch.nn.Module, img: torch.Tensor) -> Any:
+    """Inference-style decoded forward with gradients enabled."""
+    was_training = model.training
+    model.eval()
+    out = raw_prediction(model, img)
+    model.train(was_training)
+    return out
+
+
 def select_postnms_candidate(
     candidate_rows: Sequence[Mapping[str, Any]],
     baseline_score: float,
@@ -364,9 +373,9 @@ def run_oda_postnms_repair(cfg: ODAPostNMSRepairConfig) -> dict[str, Any]:
             batch = move_batch_to_device(batch, device)
             optimizer.zero_grad(set_to_none=True)
             with torch.cuda.amp.autocast(enabled=bool(cfg.amp and device.type == "cuda")):
-                pred = raw_prediction(student, batch["img"])
+                pred = _decoded_forward(student, batch["img"])
                 with torch.no_grad():
-                    teacher_pred = raw_prediction(teacher, batch["img"]) if teacher is not None else None
+                    teacher_pred = _decoded_forward(teacher, batch["img"]) if teacher is not None else None
                 loss_oda = matched_candidate_oda_loss(
                     pred,
                     batch,

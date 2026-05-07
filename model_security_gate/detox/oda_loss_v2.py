@@ -18,7 +18,19 @@ def _find_decoded_prediction(obj: Any) -> Optional[torch.Tensor]:
             if found is not None:
                 return found
     if isinstance(obj, dict):
-        for item in obj.values():
+        # Ultralytics training-mode detection heads may return
+        # {"boxes": (B, 64, N), "scores": (B, nc, N), ...}. The 64-channel
+        # tensor is a DFL box distribution, not decoded xywh+class. Do not let
+        # generic recursion mistake it for a decoded prediction. If a future
+        # wrapper returns decoded 4-channel boxes plus scores, combine them.
+        boxes = obj.get("boxes")
+        scores = obj.get("scores")
+        if torch.is_tensor(boxes) and torch.is_tensor(scores) and boxes.ndim == 3 and scores.ndim == 3:
+            if boxes.shape[0] == scores.shape[0] and boxes.shape[2] == scores.shape[2] and boxes.shape[1] == 4:
+                return torch.cat([boxes, scores], dim=1)
+        for key, item in obj.items():
+            if key in {"boxes", "scores", "feats"}:
+                continue
             found = _find_decoded_prediction(item)
             if found is not None:
                 return found

@@ -68,6 +68,7 @@ pareto-merge-yolo = "python scripts/pareto_merge_yolo.py"
 targeted-repair-yolo = "python scripts/targeted_repair_yolo.py"
 oda-postnms-repair-yolo = "python scripts/oda_postnms_repair_yolo.py"
 diagnose-oda-candidates = "python scripts/diagnose_oda_candidates.py"
+oda-score-calibration-repair-yolo = "python scripts/oda_score_calibration_repair_yolo.py"
 pytest = "python -m pytest -q"
 ci-smoke = "python -m compileall -q model_security_gate scripts tests && python -m pytest -q"
 

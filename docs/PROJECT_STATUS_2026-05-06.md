@@ -672,6 +672,90 @@ Implement a score-calibration / ranking-focused ODA repair:
   4. evaluate with this diagnostic after every candidate, not only external ASR.
 ```
 
+### 2026-05-07 ODA Score Calibration Repair
+
+New code:
+
+```text
+model_security_gate/detox/oda_score_calibration.py
+model_security_gate/detox/oda_score_calibration_repair.py
+scripts/oda_score_calibration_repair_yolo.py
+tests/test_oda_score_calibration.py
+```
+
+Important wiring fix:
+
+```text
+Ultralytics train-mode heads can return boxes=(B,64,N), scores=(B,nc,N).
+The old custom ODA losses were able to mistake the 64-channel DFL box
+distribution for decoded xywh+class predictions. Score calibration and
+post-NMS repair now use an eval-style decoded forward with gradients enabled.
+oda_loss_v2._find_decoded_prediction also avoids recursively treating
+train-mode DFL boxes as decoded predictions.
+```
+
+This explains why earlier ODA-v2/post-NMS losses could decrease while external
+decoded-score diagnostics did not improve.
+
+Score-calibration overfit smoke:
+
+```text
+D:\clean_yolo\model_security_gate\runs\oda_score_calibration_overfit3_decodedfix_2026-05-07
+```
+
+Result:
+
+```text
+before raw_near_gt_over_conf_rate: 0.0
+epoch1 raw_near_gt_over_conf_rate: 1.0
+epoch1 raw_near_gt_best_target_score_mean: 0.3994
+badnet_oda ASR: 0.15 -> 0.05
+```
+
+This confirms the new loss hits the diagnosed score-suppression mechanism.
+However, without negative guards it globally raises target sensitivity and
+worsens OGA/semantic/WaNet, so rollback remains correct.
+
+Guarded score-calibration smoke:
+
+```text
+D:\clean_yolo\model_security_gate\runs\oda_score_calibration_guard_strongneg_smoke_2026-05-07
+```
+
+Best diagnostic/external candidate:
+
+```text
+epoch: 3
+badnet_oda:                 0.10
+blend_oga:                  0.00
+wanet_oga:                  0.00
+semantic_green_cleanlabel:  0.05
+external max ASR:           0.10
+external mean ASR:          0.0375
+raw_near_gt_over_conf_rate: 1.0
+raw_near_gt_best_score:     0.4358
+clean mAP50-95:             0.1720
+```
+
+Compared with the Pareto input (`external max ASR 0.15`, `mean 0.075`,
+`mAP50-95 ≈ 0.1998`), this is the first smoke that reaches the numerical
+`external_max_asr <= 0.10` target while keeping mAP drop around `0.028`.
+It is still **not accepted** because strict per-attack rollback compares against
+the Pareto input, where `semantic_green_cleanlabel` was `0.00`; the candidate
+raises semantic to `0.05`.
+
+Current interpretation:
+
+```text
+Score calibration fixes residual badnet_oda.
+Strong target-absent guards prevent blend/WaNet from returning.
+The remaining blocker is semantic target-absent false helmet after calibration.
+Next step should add a semantic-specific negative guard / attention suppression
+or accept a separate policy that compares per-attack worsening against the
+original unpurified baseline instead of the already Pareto-clean initialization.
+For safety-critical acceptance, keep the stricter no-worse gate.
+```
+
 The latest local CUDA validation smoke is:
 
 ```text
