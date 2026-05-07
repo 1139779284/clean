@@ -129,7 +129,7 @@ def generate_group_layer_alpha_specs(
         if alpha < 0.0 or alpha > 1.0:
             raise ValueError(f"group alpha must be in [0, 1], got {alpha}")
 
-    candidates: list[tuple[float, NamedLayerAlphaSpec]] = []
+    candidates: list[tuple[tuple[float, float, float], NamedLayerAlphaSpec]] = []
     for backbone_alpha in alphas:
         for neck_alpha in alphas:
             for head_alpha in alphas:
@@ -148,7 +148,7 @@ def generate_group_layer_alpha_specs(
                 # High spread first, then mid-strength candidates. Pure all-0
                 # or all-1 are already covered by global alpha search.
                 priority = (-spread, abs(source_strength - 1.5), source_strength)
-                candidates.append((priority, NamedLayerAlphaSpec(name=name, alpha_by_layer=spec)))  # type: ignore[arg-type]
+                candidates.append((priority, NamedLayerAlphaSpec(name=name, alpha_by_layer=spec)))
     candidates.sort(key=lambda item: item[0])
     out = [spec for _, spec in candidates]
     if max_candidates is not None and max_candidates > 0:
