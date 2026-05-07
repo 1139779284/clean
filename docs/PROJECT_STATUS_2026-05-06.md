@@ -223,6 +223,39 @@ No candidate was accepted yet; the rollback gate kept the previous best model.
 This is the expected conservative behavior until a candidate improves external
 ASR without worsening clean metrics or any tracked attack.
 
+The 2026-05-07 global check found that Algorithm Upgrade v2 losses were wired,
+but Hybrid-PURIFY selection was still too conservative for exploration:
+external-ASR-improving candidates were blocked or out-scored because internal
+synthetic ASR and the final strict mAP gate dominated the selector. The code now
+separates exploratory checkpoint selection from final acceptance:
+
+```text
+internal_asr_weight: configurable, default 0.05
+selection_max_map_drop: optional exploratory gate, final max_map_drop unchanged
+block_reasons: recorded on rejected candidates
+```
+
+The selector-fix CUDA smoke is:
+
+```text
+D:\clean_yolo\model_security_gate\runs\hybrid_algo_v2_A3_explore_tolerant_selector2_smoke_2026-05-07
+```
+
+Result:
+
+```text
+input A3 candidate external max ASR: 0.25
+accepted exploratory best external max ASR: 0.20
+accepted exploratory best external mean ASR: 0.075
+clean mAP50-95 drop: 0.0415
+final status: failed_external_asr_or_map
+```
+
+This is useful optimizer progress, not a purified model. The candidate is
+allowed as an exploratory best because it improves external ASR without tracked
+attack worsening, but it still fails final acceptance because
+`external_max_asr <= 0.10` and `mAP50-95 drop <= 0.03` are not both satisfied.
+
 The latest local CUDA validation smoke is:
 
 ```text

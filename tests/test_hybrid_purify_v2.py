@@ -1,4 +1,4 @@
-from model_security_gate.detox.hybrid_purify_train import HybridPurifyConfig, compare_asr_matrices, _hybrid_selection_score
+from model_security_gate.detox.hybrid_purify_train import HybridPurifyConfig, compare_asr_matrices, _candidate_block_reasons, _hybrid_selection_score
 from model_security_gate.detox.external_hard_suite import score_for_attack_name
 from model_security_gate.detox.rnp import RNPConfig
 
@@ -16,6 +16,40 @@ def test_hybrid_selection_penalizes_worse_single_attack():
     clean = _hybrid_selection_score(0.25, 0.10, 0.18, 0.0, {"worse": []}, cfg)
     worse = _hybrid_selection_score(0.25, 0.10, 0.18, 0.0, {"worse": [{"attack": "suite::badnet_oda"}]}, cfg)
     assert worse > clean + cfg.worse_attack_penalty
+
+
+def test_hybrid_selection_is_external_first_when_internal_regresses():
+    cfg = HybridPurifyConfig()
+    baseline = _hybrid_selection_score(0.25, 0.59, 0.125, 0.0, {"worse": []}, cfg)
+    external_better = _hybrid_selection_score(0.20, 0.72, 0.0875, 0.0, {"worse": []}, cfg)
+    assert external_better < baseline
+
+
+def test_hybrid_selection_uses_selection_map_drop_for_exploration():
+    cfg = HybridPurifyConfig(selection_max_map_drop=0.06)
+    baseline = _hybrid_selection_score(0.25, 0.59, 0.125, 0.0, {"worse": []}, cfg)
+    external_better = _hybrid_selection_score(0.20, 0.72, 0.075, 0.042, {"worse": []}, cfg)
+    assert external_better < baseline
+
+
+def test_candidate_block_reasons_report_map_and_attack_failures():
+    cfg = HybridPurifyConfig(max_map_drop=0.03)
+    item = {
+        "map_drop": 0.05,
+        "asr_compare_to_baseline": {"n_worse": 1},
+    }
+    reasons = _candidate_block_reasons(item, cfg)
+    assert "attack_worse_than_baseline" in reasons
+    assert "map_drop_exceeds_threshold" in reasons
+
+
+def test_candidate_block_reasons_allow_separate_selection_map_drop():
+    cfg = HybridPurifyConfig(max_map_drop=0.03, selection_max_map_drop=0.06)
+    item = {
+        "map_drop": 0.05,
+        "asr_compare_to_baseline": {"n_worse": 0},
+    }
+    assert _candidate_block_reasons(item, cfg) == []
 
 
 def test_rnp_config_import_is_lightweight():

@@ -18,6 +18,9 @@ hybrid_purify_detox:
   max_allowed_external_asr: 0.10
   max_allowed_internal_asr: 0.10
   max_map_drop: 0.03
+  # Optional exploration gate for intermediate candidates. Final pass still
+  # uses max_map_drop above.
+  selection_max_map_drop: null
   external_eval_max_images_per_attack: 0
   external_replay_max_images_per_attack: 250
   external_failure_replay: true
@@ -72,6 +75,7 @@ hybrid_purify_detox:
   require_no_attack_worse: true
   max_single_attack_asr_worsen: 0.02
   external_mean_asr_weight: 0.35
+  internal_asr_weight: 0.05
   attacks:
     - name: badnet_oga
       kind: badnet_patch

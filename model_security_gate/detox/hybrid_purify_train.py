@@ -50,6 +50,7 @@ class HybridPurifyConfig:
     max_allowed_external_asr: float = 0.10
     max_allowed_internal_asr: float = 0.10
     max_map_drop: float = 0.03
+    selection_max_map_drop: float | None = None
     min_map50_95: float | None = None
     val_fraction: float = 0.15
     max_images: int = 0
@@ -136,6 +137,7 @@ class HybridPurifyConfig:
     require_no_attack_worse: bool = True
     max_single_attack_asr_worsen: float = 0.02
     external_mean_asr_weight: float = 0.35
+    internal_asr_weight: float = 0.05
     worse_attack_penalty: float = 2.5
     oda_worse_penalty: float = 3.0
     min_selection_improvement: float = 0.005
@@ -190,9 +192,14 @@ def _hybrid_selection_score(
 ) -> float:
     # External max ASR dominates, external mean ASR prevents hiding broad failure
     # behind one improved attack, and per-attack worsening is heavily penalized.
-    score = 1.35 * float(external_asr) + 0.30 * float(internal_asr) + float(cfg.external_mean_asr_weight) * float(external_mean_asr)
-    if map_drop is not None and float(map_drop) > float(cfg.max_map_drop):
-        score += 10.0 * (float(map_drop) - float(cfg.max_map_drop))
+    score = (
+        1.35 * float(external_asr)
+        + float(cfg.internal_asr_weight) * float(internal_asr)
+        + float(cfg.external_mean_asr_weight) * float(external_mean_asr)
+    )
+    selection_max_drop = cfg.selection_max_map_drop if cfg.selection_max_map_drop is not None else cfg.max_map_drop
+    if map_drop is not None and float(map_drop) > float(selection_max_drop):
+        score += 10.0 * (float(map_drop) - float(selection_max_drop))
     worse_rows = list((worse_compare or {}).get("worse") or [])
     if worse_rows:
         score += float(cfg.worse_attack_penalty) * len(worse_rows)
@@ -485,6 +492,17 @@ def _passes(best: Mapping[str, Any], cfg: HybridPurifyConfig) -> bool:
     return True
 
 
+def _candidate_block_reasons(item: Mapping[str, Any], cfg: HybridPurifyConfig) -> List[str]:
+    reasons: List[str] = []
+    if bool(cfg.require_no_attack_worse) and int((item.get("asr_compare_to_baseline") or {}).get("n_worse", 0) or 0) > 0:
+        reasons.append("attack_worse_than_baseline")
+    drop = item.get("map_drop")
+    selection_max_drop = cfg.selection_max_map_drop if cfg.selection_max_map_drop is not None else cfg.max_map_drop
+    if drop is not None and float(drop) > float(selection_max_drop):
+        reasons.append("map_drop_exceeds_threshold")
+    return reasons
+
+
 def run_hybrid_purify_detox_yolo(
     model_path: str | Path,
     images_dir: str | Path,
@@ -664,13 +682,12 @@ def run_hybrid_purify_detox_yolo(
     ) -> tuple[Dict[str, Any], bool, bool]:
         nonlocal best_item, accepted_model, accepted_hard_scores, accepted_external_rows
 
-        blocked = bool(
-            cfg.require_no_attack_worse
-            and int((item.get("asr_compare_to_baseline") or {}).get("n_worse", 0) or 0) > 0
-        )
+        block_reasons = _candidate_block_reasons(item, cfg)
+        blocked = bool(block_reasons)
         improved = item["selection_score"] < float(best_item["selection_score"]) - float(cfg.min_selection_improvement)
         public_item = {k: v for k, v in item.items() if k != "_evals"}
         public_item["blocked"] = blocked
+        public_item["block_reasons"] = block_reasons
         public_item["improved"] = improved
 
         if improved and not blocked:
@@ -685,7 +702,7 @@ def run_hybrid_purify_detox_yolo(
 
         public_item["accepted_as_best"] = False
         if blocked:
-            public_item["rollback_reason"] = "attack_worse_than_baseline"
+            public_item["rollback_reason"] = "+".join(block_reasons)
             public_item["rolled_back"] = bool(rollback_on_blocked)
         else:
             public_item["rollback_reason"] = "no_selection_improvement"
@@ -722,7 +739,8 @@ def run_hybrid_purify_detox_yolo(
             rnp_item["cycle"] = 0
             manifest["rnp_candidate"] = {k: v for k, v in rnp_item.items() if k != "_evals"}
             improved = rnp_item["selection_score"] < float(best_item["selection_score"]) - float(cfg.min_selection_improvement)
-            blocked = bool(cfg.require_no_attack_worse and int((rnp_item.get("asr_compare_to_baseline") or {}).get("n_worse", 0) or 0) > 0)
+            block_reasons = _candidate_block_reasons(rnp_item, cfg)
+            blocked = bool(block_reasons)
             if improved and not blocked:
                 best_item = {k: v for k, v in rnp_item.items() if k != "_evals"}
                 manifest["best"] = best_item
@@ -731,7 +749,8 @@ def run_hybrid_purify_detox_yolo(
                 accepted_external_rows = (rnp_item["_evals"].get("external") or {}).get("rows") or accepted_external_rows
             else:
                 manifest["rnp_candidate"]["rolled_back"] = True
-                manifest["rnp_candidate"]["rollback_reason"] = "attack_worse_than_baseline" if blocked else "no_selection_improvement"
+                manifest["rnp_candidate"]["block_reasons"] = block_reasons
+                manifest["rnp_candidate"]["rollback_reason"] = "+".join(block_reasons) if blocked else "no_selection_improvement"
         except Exception as exc:  # noqa: BLE001
             manifest["warnings"].append(f"RNP pre-prune candidate failed and was skipped: {exc}")
         write_json(output_dir / "hybrid_purify_manifest.json", manifest)

@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-allowed-external-asr", type=float, default=None)
     p.add_argument("--max-allowed-internal-asr", type=float, default=None)
     p.add_argument("--max-map-drop", type=float, default=None)
+    p.add_argument("--selection-max-map-drop", type=float, default=None)
     p.add_argument("--min-map50-95", type=float, default=None)
     p.add_argument("--external-eval-max-images-per-attack", type=int, default=None)
     p.add_argument("--external-replay-max-images-per-attack", type=int, default=None)
