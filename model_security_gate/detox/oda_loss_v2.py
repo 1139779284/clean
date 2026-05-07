@@ -95,6 +95,15 @@ def _score_to_negative_bce(score: torch.Tensor) -> torch.Tensor:
     return F.binary_cross_entropy_with_logits(score, torch.zeros_like(score), reduction="mean")
 
 
+def _score_to_prob(score: torch.Tensor) -> torch.Tensor:
+    if score.numel() == 0:
+        return score
+    detached = score.detach()
+    if float(detached.min()) >= -1e-5 and float(detached.max()) <= 1.0 + 1e-5:
+        return score.clamp(1e-5, 1.0 - 1e-5)
+    return torch.sigmoid(score)
+
+
 def _extract_prediction(prediction: Any) -> Optional[torch.Tensor]:
     pred = _find_decoded_prediction(prediction)
     if pred is None:
@@ -156,6 +165,11 @@ def matched_candidate_oda_loss(
     teacher_score_weight: float = 0.25,
     teacher_box_weight: float = 0.10,
     negative_other_cls_weight: float = 0.03,
+    min_score: float = 0.45,
+    best_score_weight: float = 0.75,
+    best_box_weight: float = 0.25,
+    localized_margin: float = 0.10,
+    localized_margin_weight: float = 0.20,
 ) -> torch.Tensor:
     """ODA v2: assignment-like recall preservation for target-present boxes.
 
@@ -166,6 +180,9 @@ def matched_candidate_oda_loss(
 
     It is designed for ODA/vanishing-object failures: target-present attacked
     views must still expose a high-confidence target candidate near the real box.
+    The best-candidate floor is intentionally sharper than the older averaged
+    recall loss, because ODA failures are usually caused by the localized target
+    candidate disappearing rather than all nearby anchors being uniformly low.
     """
     pred = _extract_prediction(prediction)
     if pred is None or pred.shape[1] < 5:
@@ -234,6 +251,48 @@ def matched_candidate_oda_loss(
         box_loss = (F.smooth_l1_loss(near_boxes, gt_xywh.view(1, 4).expand_as(near_boxes), reduction="none").mean(dim=1) * geom_w).sum()
         box_loss = box_loss * float(box_weight) / max(img_w, img_h)
         one_loss = cls_loss + box_loss
+
+        target_probs = _score_to_prob(target_scores)
+        if target_probs.numel() > 0:
+            best_pos = torch.argmax(target_probs)
+            best_prob = target_probs[best_pos]
+            one_loss = one_loss + F.relu(float(min_score) - best_prob).pow(2) * float(best_score_weight)
+            best_box = near_boxes[best_pos]
+            one_loss = one_loss + F.smooth_l1_loss(
+                best_box / max(img_w, img_h),
+                gt_xywh.detach() / max(img_w, img_h),
+            ) * float(best_box_weight)
+
+            if localized_margin_weight > 0:
+                near_any_target = torch.zeros((pred_xywh.shape[0],), device=device, dtype=torch.bool)
+                same_image_targets = label_indices[bidx[label_indices] == image_index]
+                for same_label_index in same_image_targets.tolist():
+                    same_box = bboxes[same_label_index]
+                    sx = same_box[0] * img_w
+                    sy = same_box[1] * img_h
+                    sw = same_box[2].clamp_min(1e-6) * img_w
+                    sh = same_box[3].clamp_min(1e-6) * img_h
+                    sxyxy = torch.stack([sx - sw / 2.0, sy - sh / 2.0, sx + sw / 2.0, sy + sh / 2.0])
+                    same_idx = _near_candidate_indices(
+                        pred_xywh,
+                        sx,
+                        sy,
+                        sw,
+                        sh,
+                        sxyxy,
+                        img_w=img_w,
+                        img_h=img_h,
+                        iou_threshold=iou_threshold,
+                        center_radius=center_radius,
+                        topk=topk,
+                    )
+                    near_any_target[same_idx] = True
+                far_scores = image_pred[class_channel, ~near_any_target]
+                if far_scores.numel() > 0:
+                    if far_scores.numel() > 1024:
+                        far_scores = torch.topk(far_scores, k=1024).values
+                    far_prob = _score_to_prob(far_scores).max()
+                    one_loss = one_loss + F.relu(far_prob - best_prob + float(localized_margin)).pow(2) * float(localized_margin_weight)
 
         if negative_other_cls_weight > 0 and nc > 1:
             other_channels = [4 + k for k in range(nc) if k != cid]

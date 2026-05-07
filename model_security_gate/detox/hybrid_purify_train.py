@@ -119,6 +119,11 @@ class HybridPurifyConfig:
     oda_matched_box_weight: float = 0.25
     oda_matched_teacher_score_weight: float = 0.25
     oda_matched_teacher_box_weight: float = 0.10
+    oda_matched_min_score: float = 0.50
+    oda_matched_best_score_weight: float = 0.90
+    oda_matched_best_box_weight: float = 0.35
+    oda_matched_localized_margin: float = 0.10
+    oda_matched_localized_margin_weight: float = 0.25
     pgbd_view_mode: str = "mixed"
     pgbd_negative_margin: float = 0.25
 
@@ -368,6 +373,11 @@ def _run_feature_purifier_phase(
         oda_matched_box_weight=float(cfg.oda_matched_box_weight),
         oda_matched_teacher_score_weight=float(cfg.oda_matched_teacher_score_weight),
         oda_matched_teacher_box_weight=float(cfg.oda_matched_teacher_box_weight),
+        oda_matched_min_score=float(cfg.oda_matched_min_score),
+        oda_matched_best_score_weight=float(cfg.oda_matched_best_score_weight),
+        oda_matched_best_box_weight=float(cfg.oda_matched_best_box_weight),
+        oda_matched_localized_margin=float(cfg.oda_matched_localized_margin),
+        oda_matched_localized_margin_weight=float(cfg.oda_matched_localized_margin_weight),
         pgbd_view_mode=str(cfg.pgbd_view_mode),
         pgbd_negative_margin=float(cfg.pgbd_negative_margin),
         save_every=1 if cfg.external_select_phase_checkpoints else max(1, epochs),

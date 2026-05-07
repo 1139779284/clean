@@ -36,6 +36,58 @@ def test_matched_candidate_oda_loss_ignores_far_high_confidence_for_recall() -> 
     assert float(loss_far) > float(loss_near)
 
 
+def test_matched_candidate_oda_loss_applies_best_candidate_floor() -> None:
+    low = matched_candidate_oda_loss(
+        _prediction(0.35, 0.0),
+        _batch(True),
+        [0],
+        cls_weight=0.0,
+        box_weight=0.0,
+        min_score=0.80,
+        best_score_weight=1.0,
+        best_box_weight=0.0,
+        localized_margin_weight=0.0,
+    )
+    high = matched_candidate_oda_loss(
+        _prediction(0.90, 0.0),
+        _batch(True),
+        [0],
+        cls_weight=0.0,
+        box_weight=0.0,
+        min_score=0.80,
+        best_score_weight=1.0,
+        best_box_weight=0.0,
+        localized_margin_weight=0.0,
+    )
+    assert float(low) > float(high)
+
+
+def test_matched_candidate_oda_loss_penalizes_far_score_margin() -> None:
+    far_high = matched_candidate_oda_loss(
+        _prediction(0.70, 0.95),
+        _batch(True),
+        [0],
+        cls_weight=0.0,
+        box_weight=0.0,
+        best_score_weight=0.0,
+        best_box_weight=0.0,
+        localized_margin=0.10,
+        localized_margin_weight=1.0,
+    )
+    far_low = matched_candidate_oda_loss(
+        _prediction(0.70, 0.20),
+        _batch(True),
+        [0],
+        cls_weight=0.0,
+        box_weight=0.0,
+        best_score_weight=0.0,
+        best_box_weight=0.0,
+        localized_margin=0.10,
+        localized_margin_weight=1.0,
+    )
+    assert float(far_high) > float(far_low)
+
+
 def test_matched_candidate_oda_loss_zero_without_target_labels() -> None:
     loss = matched_candidate_oda_loss(_prediction(0.05), _batch(False), [0])
     assert float(loss) == 0.0

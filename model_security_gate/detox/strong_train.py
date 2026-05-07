@@ -83,6 +83,11 @@ class StrongDetoxConfig:
     oda_matched_box_weight: float = 0.25
     oda_matched_teacher_score_weight: float = 0.25
     oda_matched_teacher_box_weight: float = 0.10
+    oda_matched_min_score: float = 0.45
+    oda_matched_best_score_weight: float = 0.75
+    oda_matched_best_box_weight: float = 0.25
+    oda_matched_localized_margin: float = 0.10
+    oda_matched_localized_margin_weight: float = 0.20
     lambda_oga_negative: float = 0.0
     oga_negative_topk: int = 256
     lambda_pgbd_paired: float = 0.0
@@ -358,6 +363,11 @@ def run_strong_detox_training(cfg: StrongDetoxConfig) -> Dict[str, Any]:
                     box_weight=float(cfg.oda_matched_box_weight),
                     teacher_score_weight=float(cfg.oda_matched_teacher_score_weight),
                     teacher_box_weight=float(cfg.oda_matched_teacher_box_weight),
+                    min_score=float(cfg.oda_matched_min_score),
+                    best_score_weight=float(cfg.oda_matched_best_score_weight),
+                    best_box_weight=float(cfg.oda_matched_best_box_weight),
+                    localized_margin=float(cfg.oda_matched_localized_margin),
+                    localized_margin_weight=float(cfg.oda_matched_localized_margin_weight),
                 ) * float(cfg.lambda_oda_matched) if cfg.target_class_ids and float(cfg.lambda_oda_matched) > 0 else loss_task * 0.0
                 loss_oga_negative = negative_target_candidate_suppression_loss(
                     s_out,

@@ -59,6 +59,11 @@ hybrid_purify_detox:
   oda_matched_box_weight: 0.25
   oda_matched_teacher_score_weight: 0.25
   oda_matched_teacher_box_weight: 0.10
+  oda_matched_min_score: 0.50
+  oda_matched_best_score_weight: 0.90
+  oda_matched_best_box_weight: 0.35
+  oda_matched_localized_margin: 0.10
+  oda_matched_localized_margin_weight: 0.25
   pgbd_view_mode: mixed
   pgbd_negative_margin: 0.25
   trusted_teacher_required: false

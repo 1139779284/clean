@@ -279,6 +279,35 @@ reduced, but `badnet_oda` remains at `0.20` across the explored line, so the
 next algorithmic work should target ODA recall/box preservation rather than
 more generic interpolation.
 
+An ODA-v3 targeted repair pass was implemented after that check. The matched
+candidate ODA loss now includes a best-candidate confidence floor, best-box
+localization term, and optional localized target margin. This gives a sharper
+training signal than the earlier averaged near-GT candidate loss.
+
+Validation smokes:
+
+```text
+D:\clean_yolo\model_security_gate\runs\oda_v3_selector2_focus_smoke_2026-05-07
+D:\clean_yolo\model_security_gate\runs\oda_v3_selector2_stronger_smoke_2026-05-07
+D:\clean_yolo\model_security_gate\runs\oda_phase_finetune_selector2_smoke_2026-05-07
+```
+
+Result:
+
+```text
+ODA-v3 feature loss: active, non-zero, but badnet_oda stayed 0.20
+stronger ODA-v3 feature loss: active, non-zero, but badnet_oda stayed 0.20
+YOLO phase fine-tune on failure replay: external max ASR worsened to 0.75 and was rolled back
+```
+
+The four badnet_oda failures were identical before/after the ODA-v3 feature
+attempts. This means the current bottleneck is not just loss wiring or loss
+strength. Ordinary YOLO fine-tuning on the same failure replay is actively
+unsafe without rollback. The next likely direction is a more surgical ODA
+repair that directly optimizes decoded post-NMS recall or trains on the exact
+failed crops/GT regions with stronger localization supervision, while keeping
+external rollback mandatory.
+
 The latest local CUDA validation smoke is:
 
 ```text
