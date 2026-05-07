@@ -440,6 +440,93 @@ def _failure_attacks(failure_rows: Sequence[Mapping[str, Any]] | None) -> set[st
     return attacks
 
 
+def _focus_crop_for_box(
+    xyxy: Sequence[float],
+    image_shape: Sequence[int],
+    context: float,
+    min_size: int,
+) -> tuple[int, int, int, int] | None:
+    h, w = int(image_shape[0]), int(image_shape[1])
+    if h <= 1 or w <= 1:
+        return None
+    x1, y1, x2, y2 = [float(v) for v in xyxy]
+    box_w = max(1.0, x2 - x1)
+    box_h = max(1.0, y2 - y1)
+    crop_w = max(float(min_size), box_w * max(1.0, float(context)))
+    crop_h = max(float(min_size), box_h * max(1.0, float(context)))
+    crop_w = min(crop_w, float(w))
+    crop_h = min(crop_h, float(h))
+    cx = 0.5 * (x1 + x2)
+    cy = 0.5 * (y1 + y2)
+    left = int(round(max(0.0, min(float(w) - crop_w, cx - 0.5 * crop_w))))
+    top = int(round(max(0.0, min(float(h) - crop_h, cy - 0.5 * crop_h))))
+    right = int(round(min(float(w), left + crop_w)))
+    bottom = int(round(min(float(h), top + crop_h)))
+    if right - left < 8 or bottom - top < 8:
+        return None
+    return left, top, right, bottom
+
+
+def _labels_for_crop(
+    labels: Sequence[Mapping[str, Any]],
+    crop_xyxy: Sequence[int],
+    min_area_keep: float = 0.15,
+) -> List[Dict[str, Any]]:
+    cx1, cy1, cx2, cy2 = [float(v) for v in crop_xyxy]
+    out: List[Dict[str, Any]] = []
+    for lab in labels:
+        x1, y1, x2, y2 = [float(v) for v in lab["xyxy"]]
+        area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+        ix1, iy1 = max(x1, cx1), max(y1, cy1)
+        ix2, iy2 = min(x2, cx2), min(y2, cy2)
+        inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+        if inter <= 1.0 or (area > 0 and inter / area < float(min_area_keep)):
+            continue
+        out.append(
+            {
+                "cls_id": int(lab["cls_id"]),
+                "xyxy": (ix1 - cx1, iy1 - cy1, ix2 - cx1, iy2 - cy1),
+            }
+        )
+    return out
+
+
+def _append_oda_focus_crops(
+    img_out: Path,
+    lab_out: Path,
+    ds: ExternalAttackDataset,
+    path: Path,
+    img: Any,
+    labels: Sequence[Mapping[str, Any]],
+    target_ids: Sequence[int],
+    repeat: int,
+    context: float,
+    min_size: int,
+) -> int:
+    added = 0
+    target_labels = [lab for lab in labels if int(lab.get("cls_id", -1)) in target_ids]
+    for target_idx, lab in enumerate(target_labels):
+        crop_xyxy = _focus_crop_for_box(lab["xyxy"], img.shape, context=context, min_size=min_size)
+        if crop_xyxy is None:
+            continue
+        x1, y1, x2, y2 = crop_xyxy
+        crop = img[y1:y2, x1:x2].copy()
+        crop_labels = _labels_for_crop(labels, crop_xyxy)
+        if not _has_target(crop_labels, target_ids):
+            continue
+        for rep in range(max(1, int(repeat))):
+            stem = (
+                f"external_focus_oda_{ds.suite or 'suite'}_{ds.name}_{path.stem}"
+                f"_t{target_idx:02d}_r{rep:02d}"
+            ).replace(" ", "_")
+            dest_img = img_out / f"{stem}.jpg"
+            dest_lab = lab_out / f"{stem}.txt"
+            write_image(dest_img, crop)
+            write_yolo_labels(dest_lab, crop_labels, crop.shape)
+            added += 1
+    return added
+
+
 def append_external_replay_samples(
     output_dataset_dir: str | Path,
     attack_datasets: Sequence[ExternalAttackDataset],
@@ -451,6 +538,10 @@ def append_external_replay_samples(
     failure_rows: Sequence[Mapping[str, Any]] | None = None,
     failure_only: bool = False,
     repeat: int = 1,
+    oda_focus_crops: bool = False,
+    oda_focus_crop_repeat: int = 2,
+    oda_focus_crop_context: float = 3.0,
+    oda_focus_crop_min_size: int = 160,
 ) -> Dict[str, Any]:
     """Append existing hard-suite images to an ASR-aware YOLO training dataset.
 
@@ -477,6 +568,9 @@ def append_external_replay_samples(
         "n_failure_basenames": len(failed_basenames),
         "n_failure_attacks": len(failed_attacks),
         "repeat": max(1, int(repeat)),
+        "oda_focus_crops": bool(oda_focus_crops),
+        "oda_focus_crops_added": 0,
+        "oda_focus_crop_repeat": max(1, int(oda_focus_crop_repeat)),
     }
     if failure_only and not failed_paths:
         stats["warning"] = "failure_only_requested_but_no_failure_rows"
@@ -517,4 +611,21 @@ def append_external_replay_samples(
                 write_yolo_labels(dest_lab, labels, img.shape)
                 stats["added"] += 1
                 stats["by_attack"][ds.name] = int(stats["by_attack"].get(ds.name, 0)) + 1
+            if bool(oda_focus_crops) and goal == "oda":
+                crops_added = _append_oda_focus_crops(
+                    img_out=img_out,
+                    lab_out=lab_out,
+                    ds=ds,
+                    path=path,
+                    img=img,
+                    labels=labels,
+                    target_ids=target_ids,
+                    repeat=max(1, int(oda_focus_crop_repeat)),
+                    context=float(oda_focus_crop_context),
+                    min_size=int(oda_focus_crop_min_size),
+                )
+                if crops_added:
+                    stats["added"] += int(crops_added)
+                    stats["oda_focus_crops_added"] += int(crops_added)
+                    stats["by_attack"][ds.name] = int(stats["by_attack"].get(ds.name, 0)) + int(crops_added)
     return stats

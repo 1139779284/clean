@@ -78,6 +78,10 @@ class ASRClosedLoopConfig:
     stop_on_pass: bool = True
     external_failure_replay: bool = True
     external_failure_replay_repeat: int = 4
+    external_oda_focus_crops: bool = False
+    external_oda_focus_crop_repeat: int = 2
+    external_oda_focus_crop_context: float = 3.0
+    external_oda_focus_crop_min_size: int = 160
 
 
 def _eval_clean_yolo(model_path: str | Path, data_yaml: str | Path, imgsz: int, batch: int, device: str | int | None = None) -> Dict[str, Any] | None:
@@ -276,6 +280,10 @@ def _build_phase_dataset(
             failure_rows=failure_rows,
             failure_only=bool(cfg.external_failure_replay),
             repeat=max(1, int(cfg.external_failure_replay_repeat if cfg.external_failure_replay else 1)),
+            oda_focus_crops=bool(getattr(cfg, "external_oda_focus_crops", False)),
+            oda_focus_crop_repeat=int(getattr(cfg, "external_oda_focus_crop_repeat", 2)),
+            oda_focus_crop_context=float(getattr(cfg, "external_oda_focus_crop_context", 3.0)),
+            oda_focus_crop_min_size=int(getattr(cfg, "external_oda_focus_crop_min_size", 160)),
         )
     write_json(phase_dir / "phase_manifest.json", {"phase": asdict(phase), "replay_stats": replay_stats, "data_yaml": str(yaml_path)})
     return yaml_path

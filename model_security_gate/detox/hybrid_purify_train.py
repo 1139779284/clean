@@ -62,6 +62,10 @@ class HybridPurifyConfig:
     external_oda_success_mode: str = "localized_any_recalled"
     external_failure_replay: bool = True
     external_failure_replay_repeat: int = 4
+    external_oda_focus_crops: bool = False
+    external_oda_focus_crop_repeat: int = 2
+    external_oda_focus_crop_context: float = 3.0
+    external_oda_focus_crop_min_size: int = 160
 
     # Phase schedule. Keep phases short; selection is external-ASR driven.
     phase_epochs: int = 2
@@ -787,6 +791,10 @@ def run_hybrid_purify_detox_yolo(
             external_failure_replay_repeat=int(
                 cfg.aggressive_failure_replay_repeat if cfg.aggressive_mode else cfg.external_failure_replay_repeat
             ),
+            external_oda_focus_crops=bool(cfg.external_oda_focus_crops),
+            external_oda_focus_crop_repeat=int(cfg.external_oda_focus_crop_repeat),
+            external_oda_focus_crop_context=float(cfg.external_oda_focus_crop_context),
+            external_oda_focus_crop_min_size=int(cfg.external_oda_focus_crop_min_size),
             base_clean_repeat=cfg.base_clean_repeat,
             recovery_clean_repeat=cfg.recovery_clean_repeat,
             base_attack_repeat=cfg.base_attack_repeat,

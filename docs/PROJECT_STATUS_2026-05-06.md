@@ -308,6 +308,48 @@ repair that directly optimizes decoded post-NMS recall or trains on the exact
 failed crops/GT regions with stronger localization supervision, while keeping
 external rollback mandatory.
 
+### 2026-05-07 ODA Focus-Crop Replay Smoke
+
+New code adds optional ODA failure crop replay:
+
+```text
+external_oda_focus_crops
+external_oda_focus_crop_repeat
+external_oda_focus_crop_context
+external_oda_focus_crop_min_size
+```
+
+The ODA hardening phase now can copy the current external `success=true` ODA
+failure images and additionally add target-centered crops with correct YOLO
+labels. This is meant to give the model higher-resolution localization/recall
+supervision for the exact failed helmet/head boxes.
+
+CUDA smoke:
+
+```text
+D:\clean_yolo\model_security_gate\runs\oda_focus_crop_selector2_smoke_2026-05-07
+```
+
+Result:
+
+```text
+baseline external max ASR: 0.20
+baseline external mean ASR: 0.075
+ODA hardening replay added: 104 samples
+ODA focus crops added: 72 samples
+ODA hardening feature checkpoints: worsened to max ASR 0.25-0.30
+clean recovery candidate: returned to max ASR 0.20, mean ASR 0.075
+final status: failed_external_asr_or_map
+```
+
+Conclusion: the crop replay plumbing works and is covered by tests, but this
+specific crop-only ODA supervision did not push `badnet_oda` below `0.20`.
+It is useful infrastructure, not a solved detox result. The likely reason is
+that target-centered crops strengthen target appearance/localization, but may
+remove or weaken the global trigger/context responsible for ODA disappearance.
+Next work should combine target crops with trigger-preserving context or a
+decoded-candidate objective evaluated directly on the full failed image.
+
 The latest local CUDA validation smoke is:
 
 ```text

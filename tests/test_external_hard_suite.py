@@ -195,3 +195,40 @@ def test_failure_only_replay_can_match_by_basename_across_roots(tmp_path: Path):
     assert stats["added"] == 1
     assert len(copied) == 1
     assert "shared" in copied[0].name
+
+
+def test_oda_focus_crop_replay_adds_target_centered_labels(tmp_path: Path):
+    root = tmp_path / "bench"
+    img = root / "data" / "badnet_oda" / "images" / "val" / "failed.jpg"
+    lab = root / "data" / "badnet_oda" / "labels" / "val" / "failed.txt"
+    img.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(img), np.zeros((100, 100, 3), dtype=np.uint8))
+    lab.parent.mkdir(parents=True, exist_ok=True)
+    lab.write_text("0 0.500000 0.500000 0.200000 0.200000\n", encoding="utf-8")
+
+    datasets = discover_external_attack_datasets([root])
+    out = tmp_path / "detox_ds"
+    stats = append_external_replay_samples(
+        output_dataset_dir=out,
+        attack_datasets=datasets,
+        target_class_ids=[0],
+        selected_attack_names=["badnet_oda"],
+        failure_rows=[{"image": str(img), "attack": "badnet_oda", "success": True}],
+        failure_only=True,
+        repeat=1,
+        oda_focus_crops=True,
+        oda_focus_crop_repeat=2,
+        oda_focus_crop_context=2.0,
+        oda_focus_crop_min_size=40,
+    )
+
+    focus_images = sorted((out / "images" / "train").glob("external_focus_oda_*.jpg"))
+    focus_labels = sorted((out / "labels" / "train").glob("external_focus_oda_*.txt"))
+    assert stats["added"] == 3
+    assert stats["oda_focus_crops_added"] == 2
+    assert len(focus_images) == 2
+    assert len(focus_labels) == 2
+    first_label = focus_labels[0].read_text(encoding="utf-8").strip().split()
+    assert first_label[0] == "0"
+    assert 0.45 <= float(first_label[1]) <= 0.55
+    assert 0.45 <= float(first_label[2]) <= 0.55

@@ -23,6 +23,12 @@ asr_closed_loop_detox:
   external_replay_roots: []
   external_eval_max_images_per_attack: 0
   external_replay_max_images_per_attack: 250
+  external_failure_replay: true
+  external_failure_replay_repeat: 4
+  external_oda_focus_crops: false
+  external_oda_focus_crop_repeat: 2
+  external_oda_focus_crop_context: 3.0
+  external_oda_focus_crop_min_size: 160
   # ODA ASR definition:
   # - localized_any_recalled: success if no GT target is spatially recalled
   # - class_presence: success only if no target-class detection exists

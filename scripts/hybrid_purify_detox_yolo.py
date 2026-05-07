@@ -37,6 +37,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--external-eval-max-images-per-attack", type=int, default=None)
     p.add_argument("--external-replay-max-images-per-attack", type=int, default=None)
     p.add_argument("--external-failure-replay-repeat", type=int, default=None)
+    p.add_argument("--external-oda-focus-crops", action="store_true", default=None, help="Add target-centered crops for ODA failure replay samples")
+    p.add_argument("--external-oda-focus-crop-repeat", type=int, default=None)
+    p.add_argument("--external-oda-focus-crop-context", type=float, default=None)
+    p.add_argument("--external-oda-focus-crop-min-size", type=int, default=None)
     p.add_argument(
         "--external-oda-success-mode",
         choices=["localized_any_recalled", "class_presence", "strict_all_recalled"],
@@ -116,6 +120,7 @@ def _resolved(args: argparse.Namespace) -> dict:
         "no_rollback_bad_phase": ("rollback_bad_phase", False),
         "rollback_unimproved_phase": ("rollback_unimproved_phase", True),
         "no_external_failure_replay": ("external_failure_replay", False),
+        "external_oda_focus_crops": ("external_oda_focus_crops", True),
         "no_external_select_phase_checkpoints": ("external_select_phase_checkpoints", False),
         "aggressive_mode": ("aggressive_mode", True),
         "no_pre_prune": ("run_pre_prune", False),
