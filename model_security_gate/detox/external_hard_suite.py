@@ -10,6 +10,12 @@ from tqdm import tqdm
 
 from model_security_gate.adapters.base import Detection, ModelAdapter
 from model_security_gate.adapters.yolo_ultralytics import UltralyticsYOLOAdapter
+from model_security_gate.guard.semantic_abstain import (
+    SemanticAbstainRule,
+    decide_semantic_abstain,
+    detection_matches_rule,
+    load_semantic_abstain_rules,
+)
 from model_security_gate.utils.geometry import iou_xyxy
 from model_security_gate.utils.io import (
     list_images,
@@ -53,6 +59,8 @@ class ExternalHardSuiteConfig:
     max_images_per_attack: int = 0
     replay_max_images_per_attack: int = 0
     seed: int = 42
+    semantic_abstain_rules: str | None = None
+    apply_semantic_abstain: bool = False
 
 
 def infer_attack_goal(name: str, default: str = "semantic") -> str:
@@ -137,6 +145,52 @@ def _target_labels(labels: Sequence[Mapping[str, Any]], target_ids: Sequence[int
 def _target_dets(dets: Sequence[Detection], target_ids: Sequence[int]) -> List[Detection]:
     wanted = set(int(x) for x in target_ids)
     return [d for d in dets if int(d.cls_id) in wanted]
+
+
+def _det_to_guard_mapping(det: Detection) -> Dict[str, Any]:
+    return {
+        "xyxy": list(det.xyxy),
+        "conf": float(det.conf),
+        "class_id": int(det.cls_id),
+        "class_name": str(det.cls_name or ""),
+    }
+
+
+def apply_semantic_abstain_guard_to_detections(
+    dets: Sequence[Detection],
+    rules: Sequence[SemanticAbstainRule],
+    *,
+    image_path: str | Path | None = None,
+) -> tuple[List[Detection], Dict[str, Any]]:
+    """Remove detections matched by runtime semantic-abstain rules.
+
+    External hard-suite ASR measures automatic unsafe behavior. A runtime
+    semantic abstain/review rule means a known target-absent semantic false
+    positive is no longer accepted as an automatic target detection, so the
+    guarded evaluation should score after removing those matched detections.
+    """
+
+    if not rules:
+        return list(dets), {"action": "pass", "matched_rules": [], "max_matched_conf": None, "removed_detections": 0}
+
+    image_text = str(image_path) if image_path is not None else None
+    mappings = [_det_to_guard_mapping(det) for det in dets]
+    decision = decide_semantic_abstain(mappings, rules, image_path=image_text)
+    if decision.action != "review":
+        payload = decision.to_dict()
+        payload["removed_detections"] = 0
+        return list(dets), payload
+
+    kept: List[Detection] = []
+    removed = 0
+    for det, mapping in zip(dets, mappings):
+        if any(detection_matches_rule(mapping, rule, image_path=image_text) for rule in rules):
+            removed += 1
+            continue
+        kept.append(det)
+    payload = decision.to_dict()
+    payload["removed_detections"] = int(removed)
+    return kept, payload
 
 
 def _det_matches_label(det: Detection, lab: Mapping[str, Any], match_iou: float) -> bool:
@@ -247,6 +301,11 @@ def run_external_hard_suite(
 ) -> Dict[str, Any]:
     attacks = list(cfg.attacks) + discover_external_attack_datasets(cfg.roots)
     target_ids = [int(x) for x in target_class_ids]
+    semantic_rules: List[SemanticAbstainRule] = []
+    if cfg.apply_semantic_abstain:
+        if not cfg.semantic_abstain_rules:
+            raise ValueError("apply_semantic_abstain=True requires semantic_abstain_rules")
+        semantic_rules = load_semantic_abstain_rules(cfg.semantic_abstain_rules)
     rows: List[Dict[str, Any]] = []
     datasets_seen: set[tuple[str, str, str]] = set()
     for ds in attacks:
@@ -260,6 +319,9 @@ def run_external_hard_suite(
             img = read_image_bgr(path)
             labels = read_yolo_labels(path, img.shape, labels_dir=ds.labels_dir)
             dets = adapter.predict_image(path, conf=cfg.conf, iou=cfg.iou, imgsz=cfg.imgsz)
+            guard_info: Dict[str, Any] = {"action": "pass", "matched_rules": [], "max_matched_conf": None, "removed_detections": 0}
+            if semantic_rules and goal == "semantic" and not _has_target(labels, target_ids):
+                dets, guard_info = apply_semantic_abstain_guard_to_detections(dets, semantic_rules, image_path=path)
             score = _score_external_result(goal, dets, labels, target_ids, cfg.match_iou, cfg.oda_success_mode)
             if score is None:
                 continue
@@ -270,6 +332,10 @@ def run_external_hard_suite(
                     "goal": goal,
                     "image": str(path),
                     "image_basename": Path(path).name,
+                    "runtime_guard_action": guard_info.get("action"),
+                    "runtime_guard_removed_detections": guard_info.get("removed_detections"),
+                    "runtime_guard_max_matched_conf": guard_info.get("max_matched_conf"),
+                    "runtime_guard_matched_rules": ";".join(str(r.get("rule_id")) for r in guard_info.get("matched_rules", []) if r.get("rule_id")),
                     **score,
                 }
             )

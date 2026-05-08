@@ -34,6 +34,8 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument("--max-images-per-attack", type=int, default=None)
+    p.add_argument("--semantic-abstain-rules", default=None, help="YAML/JSON semantic runtime-abstain rules to apply before scoring target-absent semantic rows.")
+    p.add_argument("--apply-semantic-abstain", action="store_true", default=None, help="Apply semantic runtime-abstain rules during guarded external evaluation.")
     p.add_argument("--device", default=None)
     return p.parse_args()
 
@@ -52,6 +54,8 @@ def main() -> None:
         "match_iou": 0.30,
         "oda_success_mode": "localized_any_recalled",
         "max_images_per_attack": 0,
+        "semantic_abstain_rules": None,
+        "apply_semantic_abstain": False,
         "device": None,
     }
     raw = load_yaml_config(args.config, section="external_hard_suite")
@@ -69,6 +73,8 @@ def main() -> None:
         match_iou=float(resolved.get("match_iou", 0.30)),
         oda_success_mode=str(resolved.get("oda_success_mode", "localized_any_recalled")),
         max_images_per_attack=int(resolved.get("max_images_per_attack", 0) or 0),
+        semantic_abstain_rules=resolved.get("semantic_abstain_rules"),
+        apply_semantic_abstain=bool(resolved.get("apply_semantic_abstain", False)),
     )
     result = run_external_hard_suite_for_yolo(
         model_path=resolved["model"],
