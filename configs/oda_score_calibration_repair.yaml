@@ -1,0 +1,61 @@
+# Reproducible config for scripts/oda_score_calibration_repair_yolo.py.
+# This file freezes the current targeted repair protocol around the alpha_0p08
+# candidate: local semantic FP suppression is useful only when ODA/OGA/WaNet and
+# clean-mAP no-worse gates are evaluated in the same run.
+
+model: runs/pareto_global_alpha_0p08.pt
+output_dir: runs/oda_score_calibration_repair
+
+data:
+  clean_data_yaml: data/clean/data.yaml
+  external_suite_dir: data/external_hard_suite
+  image_size: 640
+  max_images: 20
+
+repair:
+  epochs: 3
+  batch_size: 4
+  lr: 0.00001
+  optimizer: adamw
+  weight_decay: 0.0005
+  freeze_backbone: true
+  repair_head_only: true
+  seed: 1337
+
+score_calibration:
+  target_class_name: helmet
+  lambda_score: 1.0
+  lambda_task: 0.25
+  lambda_oga: 0.75
+  lambda_semantic_negative: 1.0
+  lambda_semantic_fp_region: 2.0
+  # The region should be filled from diagnostics for the known semantic FP.
+  # Example: [x1, y1, x2, y2] in image pixels after letterbox-normalized input.
+  semantic_fp_region_xyxy: null
+  semantic_fp_region_min_iou: 0.0
+  target_absent_score_cap: 0.25
+  semantic_fp_score_cap: 0.25
+
+hard_gates:
+  badnet_oda_max_asr: 0.05
+  semantic_green_cleanlabel_max_asr: 0.0
+  blend_oga_max_asr: 0.0
+  wanet_oga_max_asr: 0.0
+  external_max_asr: 0.05
+  external_mean_asr: 0.05
+  semantic_target_absent_max_conf: 0.25
+  max_map50_95_drop: 0.03
+  no_per_attack_regression: true
+
+replay:
+  include_external_replay: true
+  include_clean_anchor: true
+  include_oda_positive_anchor: true
+  include_oga_target_absent_guard: true
+  include_wanet_guard: true
+  replay_repeat: 2
+
+artifacts:
+  save_candidate_every_epoch: true
+  write_resolved_config: true
+  write_candidate_manifest: true

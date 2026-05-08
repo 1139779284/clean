@@ -24,15 +24,4 @@ jobs:
         run: python -m pytest -q
       - name: CLI help smoke
         run: |
-          python scripts/security_gate.py --help >/dev/null
-          python scripts/strong_detox_yolo.py --help >/dev/null
-          python scripts/detox_train_yolo.py --help >/dev/null
-          python scripts/acceptance_gate.py --help >/dev/null
-          python scripts/generate_report.py --help >/dev/null
-          python scripts/eval_yolo_metrics.py --help >/dev/null
-          python scripts/asr_aware_detox_yolo.py --help >/dev/null
-          python scripts/run_asr_regression.py --help >/dev/null
-          python scripts/asr_closed_loop_detox_yolo.py --help >/dev/null
-          python scripts/run_external_hard_suite.py --help >/dev/null
-          python scripts/hybrid_purify_detox_yolo.py --help >/dev/null
-          python scripts/rnp_prune_yolo.py --help >/dev/null
+          python scripts/ci_help_smoke_all.py --allow-missing-heavy-deps

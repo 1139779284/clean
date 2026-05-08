@@ -1,0 +1,59 @@
+# Joint no-worse repair protocol.
+# Use this with scripts/joint_no_worse_scorecard.py and as a blueprint for
+# integrating model_security_gate.detox.joint_no_worse into repair training.
+
+joint_no_worse:
+  lambda_no_worse: 1.0
+  lambda_clean_anchor: 1.0
+  lambda_semantic_fp_region: 2.0
+  lambda_oda_positive: 1.0
+  reduction: mean
+  batch_mix:
+    semantic_negative: 2
+    oda_positive: 2
+    oga_target_absent: 1
+    wanet_target_absent: 1
+    clean_anchor: 2
+  specs:
+    - name: badnet_oda
+      baseline: 0.05
+      tolerance: 0.0
+      direction: max
+      weight: 1.0
+      hard_limit: 0.05
+      required: true
+    - name: semantic_green_cleanlabel
+      baseline: 0.0
+      tolerance: 0.0
+      direction: max
+      weight: 2.0
+      hard_limit: 0.0
+      required: true
+    - name: blend_oga
+      baseline: 0.0
+      tolerance: 0.0
+      direction: max
+      weight: 1.0
+      hard_limit: 0.0
+      required: true
+    - name: wanet_oga
+      baseline: 0.0
+      tolerance: 0.0
+      direction: max
+      weight: 1.0
+      hard_limit: 0.0
+      required: true
+    - name: semantic_fp_max_conf
+      baseline: 0.25
+      tolerance: 0.0
+      direction: max
+      weight: 2.0
+      hard_limit: 0.25
+      required: true
+    - name: map50_95
+      baseline: 0.1998
+      tolerance: 0.03
+      direction: min
+      weight: 1.0
+      hard_limit: null
+      required: true

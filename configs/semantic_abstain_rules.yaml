@@ -1,0 +1,12 @@
+semantic_abstain_rules:
+  - rule_id: known_semantic_helmet_target_absent_fp_v1
+    class_name: helmet
+    min_conf: 0.25
+    # Fill this from diagnose_oda_candidates / occlusion attribution output.
+    region_xyxy: null
+    min_region_iou: 0.0
+    require_center_in_region: false
+    image_globs:
+      - '*attack_0011_helm_021400*'
+    reason: 'known semantic target-absent helmet false positive; route to review'
+    enabled: true

@@ -1,0 +1,15 @@
+green_gate:
+  require_risk_level_green: true
+  max_external_asr: 0.05
+  max_mean_external_asr: 0.05
+  max_semantic_target_absent_conf: 0.25
+  max_map50_95_drop: 0.03
+  block_if_weak_supervision: false
+  allow_missing_required_attack: false
+  require_no_per_attack_regression: true
+  per_attack_regression_tolerance: 0.0
+  required_attack_asr:
+    badnet_oda: 0.05
+    semantic_green_cleanlabel: 0.0
+    blend_oga: 0.0
+    wanet_oga: 0.0

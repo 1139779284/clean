@@ -1,0 +1,23 @@
+intake:
+  require_model_card: true
+  require_training_log: false
+  require_preprocess: true
+  require_class_map: true
+  require_provenance: true
+  allowed_model_suffixes: [.pt, .onnx, .engine]
+  expected_task: detect
+  min_class_count: 1
+  required_model_card_fields:
+    - model_name
+    - model_version
+    - owner
+    - training_data
+    - class_names
+    - preprocess
+    - intended_use
+    - known_risks
+  required_preprocess_fields:
+    - imgsz
+    - letterbox
+    - color_space
+    - normalization
