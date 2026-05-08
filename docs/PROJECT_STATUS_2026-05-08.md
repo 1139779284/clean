@@ -55,6 +55,18 @@ tests/test_oda_score_calibration.py
   region guard apply/skip tests
 ```
 
+Added hard candidate gates for the final repair stage:
+
+```text
+scripts/oda_score_calibration_repair_yolo.py
+  --max-attack-asr badnet_oda=0.05 blend_oga=0.0 semantic_green_cleanlabel=0.0 wanet_oga=0.0
+  --semantic-fp-required-max-conf 0.25
+
+model_security_gate/detox/oda_score_calibration_repair.py
+  blocked_by_hard_constraints(...)
+  semantic_target_absent_max_conf(...)
+```
+
 Local smoke / CI:
 
 ```text
@@ -128,6 +140,41 @@ final: rejected / not usable
 
 Conclusion: too much region/anchor pressure shifts the model into new OGA/semantic/WaNet failures.
 
+### Hard-Gate Validation
+
+Run:
+
+```text
+D:\clean_yolo\model_security_gate\runs\hard_gate_validation_alpha008_2026-05-08
+```
+
+This run validates the candidate selector rather than claiming a better model.
+The candidate still had:
+
+```text
+external max ASR:                 0.05
+semantic_green_cleanlabel ASR:    0.05
+semantic target-absent max conf:  0.4411509931
+```
+
+With hard gates:
+
+```text
+--max-attack-asr semantic_green_cleanlabel=0.0
+--semantic-fp-required-max-conf 0.25
+```
+
+it was correctly blocked:
+
+```text
+blocked_constraints:
+  attack_asr>0.0:semantic_green_cleanlabel=0.05
+  semantic_fp_conf>0.25:0.4411509931087494
+final: rolled back to alpha_0p08
+```
+
+Conclusion: the project now prevents a numerically low `max_asr <= 0.10` candidate from being accepted when the known semantic FP is still present.
+
 ## Current Interpretation
 
 The engineering pipeline is now runnable and rollback-safe. The remaining problem is an algorithmic Pareto conflict:
@@ -168,4 +215,3 @@ wanet_oga == 0.00
 mAP50-95 drop <= 0.03
 no per-attack regression
 ```
-

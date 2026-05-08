@@ -64,12 +64,37 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--semantic-fp-region-center-radius", type=float, default=2.0)
     p.add_argument("--semantic-fp-region-max-score", type=float, default=0.03)
     p.add_argument("--semantic-fp-region-margin-weight", type=float, default=1.0)
+    p.add_argument(
+        "--max-attack-asr",
+        nargs="*",
+        default=None,
+        help="Hard per-attack ASR constraints, e.g. badnet_oda=0.05 semantic_green_cleanlabel=0.0.",
+    )
+    p.add_argument(
+        "--semantic-fp-required-max-conf",
+        type=float,
+        default=None,
+        help="Hard gate: max target conf on semantic target-absent rows must be at or below this value.",
+    )
     p.add_argument("--max-single-attack-worsen", type=float, default=0.02)
     p.add_argument("--max-allowed-external-asr", type=float, default=0.10)
     p.add_argument("--min-diagnostic-improvement", type=float, default=0.03)
     p.add_argument("--no-require-external-improvement", action="store_true")
     p.add_argument("--amp", action="store_true")
     return p.parse_args()
+
+
+def _parse_max_attack_asr(values: list[str] | None) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for raw in values or []:
+        if "=" not in raw:
+            raise ValueError(f"--max-attack-asr entries must be NAME=VALUE, got {raw!r}")
+        name, value = raw.split("=", 1)
+        name = name.strip()
+        if not name:
+            raise ValueError(f"--max-attack-asr attack name is empty in {raw!r}")
+        out[name] = float(value)
+    return out
 
 
 def main() -> None:
@@ -123,6 +148,8 @@ def main() -> None:
         semantic_fp_region_center_radius=args.semantic_fp_region_center_radius,
         semantic_fp_region_max_score=args.semantic_fp_region_max_score,
         semantic_fp_region_margin_weight=args.semantic_fp_region_margin_weight,
+        max_attack_asr=_parse_max_attack_asr(args.max_attack_asr),
+        semantic_fp_required_max_conf=args.semantic_fp_required_max_conf,
         max_single_attack_worsen=args.max_single_attack_worsen,
         max_allowed_external_asr=args.max_allowed_external_asr,
         min_diag_score_improvement=args.min_diagnostic_improvement,

@@ -106,6 +106,9 @@ class ODAScoreCalibrationRepairConfig:
     semantic_fp_region_max_score: float = 0.03
     semantic_fp_region_margin_weight: float = 1.0
 
+    max_attack_asr: Mapping[str, float] = field(default_factory=dict)
+    semantic_fp_required_max_conf: float | None = None
+
     max_single_attack_worsen: float = 0.02
     max_allowed_external_asr: float = 0.10
     min_external_score_improvement: float = 1e-6
@@ -149,7 +152,7 @@ def _select_calibration_candidate(
     all_rows = [dict(r) for r in rows]
     best_by_external = min(all_rows, key=lambda r: float(r["external_score"])) if all_rows else None
     best_by_diag = max(all_rows, key=lambda r: float(r["diagnostic_score"])) if all_rows else None
-    eligible = [r for r in all_rows if not r.get("blocked_attacks")]
+    eligible = [r for r in all_rows if not r.get("blocked_attacks") and not r.get("blocked_constraints")]
     if require_external_improvement:
         eligible = [
             r
@@ -192,6 +195,66 @@ def _matches_attack_name(attack: str, selected_names: Sequence[str]) -> bool:
         if n == low or n in low or low in n:
             return True
     return False
+
+
+def _matrix(result: Mapping[str, Any]) -> dict[str, float]:
+    return {str(k): float(v) for k, v in ((result.get("summary") or {}).get("asr_matrix") or {}).items()}
+
+
+def _score_for_attack(matrix: Mapping[str, float], attack_name: str) -> float | None:
+    name = str(attack_name).lower()
+    best: float | None = None
+    for key, value in matrix.items():
+        tail = str(key).lower().split("::")[-1]
+        if tail == name or name in tail or tail in name:
+            best = max(float(value), best if best is not None else float(value))
+    return best
+
+
+def semantic_target_absent_max_conf(result: Mapping[str, Any], semantic_names: Sequence[str] = ()) -> float:
+    """Return max target confidence on semantic target-absent rows.
+
+    This catches the exact residual failure shape even when ASR is summarized at
+    attack level: a semantic negative image still has a target-class box above
+    the deployment threshold.
+    """
+    names = [str(name).lower() for name in semantic_names if str(name).strip()]
+    max_conf = 0.0
+    for row in result.get("rows", []) or []:
+        attack = str(row.get("attack") or "")
+        goal = infer_attack_goal(str(row.get("goal") or attack))
+        if goal != "semantic" and not any(name and name in attack.lower() for name in names):
+            continue
+        if _truthy(row.get("has_gt_target")) or int(float(row.get("n_gt_target") or 0)) > 0:
+            continue
+        try:
+            max_conf = max(max_conf, float(row.get("max_target_conf") or 0.0))
+        except (TypeError, ValueError):
+            continue
+    return float(max_conf)
+
+
+def blocked_by_hard_constraints(
+    result: Mapping[str, Any],
+    *,
+    max_attack_asr: Mapping[str, float] | None = None,
+    semantic_fp_required_max_conf: float | None = None,
+    semantic_names: Sequence[str] = (),
+) -> list[str]:
+    blocked: list[str] = []
+    matrix = _matrix(result)
+    for attack_name, limit in (max_attack_asr or {}).items():
+        value = _score_for_attack(matrix, str(attack_name))
+        if value is None:
+            blocked.append(f"missing_attack_asr:{attack_name}")
+            continue
+        if float(value) > float(limit) + 1e-12:
+            blocked.append(f"attack_asr>{limit}:{attack_name}={value}")
+    if semantic_fp_required_max_conf is not None:
+        max_conf = semantic_target_absent_max_conf(result, semantic_names=semantic_names)
+        if max_conf > float(semantic_fp_required_max_conf) + 1e-12:
+            blocked.append(f"semantic_fp_conf>{semantic_fp_required_max_conf}:{max_conf}")
+    return blocked
 
 
 def _map_xyxy_to_train_space(
@@ -556,7 +619,14 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
         )
         diag_summary = diag.get("summary") or {}
         blocked = _blocked_by_worsening(result, before, float(cfg.max_single_attack_worsen))
+        blocked_constraints = blocked_by_hard_constraints(
+            result,
+            max_attack_asr=cfg.max_attack_asr,
+            semantic_fp_required_max_conf=cfg.semantic_fp_required_max_conf,
+            semantic_names=tuple(cfg.semantic_guard_keywords),
+        )
         summary = result.get("summary") or {}
+        semantic_fp_max_conf = semantic_target_absent_max_conf(result, semantic_names=tuple(cfg.semantic_guard_keywords))
         row = {
             "epoch": epoch,
             "model": str(ckpt),
@@ -570,8 +640,14 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
             "raw_near_gt_over_conf_rate": float(diag_summary.get("raw_near_gt_over_conf_rate") or 0.0),
             "raw_near_gt_best_target_score_mean": float(diag_summary.get("raw_near_gt_best_target_score_mean") or 0.0),
             "lowconf_recalled_rate": float(diag_summary.get("lowconf_recalled_rate") or 0.0),
+            "semantic_target_absent_max_conf": semantic_fp_max_conf,
             "blocked_attacks": blocked,
-            "accepted": (not blocked) and float(summary.get("max_asr", 1.0)) <= float(cfg.max_allowed_external_asr),
+            "blocked_constraints": blocked_constraints,
+            "accepted": (
+                (not blocked)
+                and (not blocked_constraints)
+                and float(summary.get("max_asr", 1.0)) <= float(cfg.max_allowed_external_asr)
+            ),
         }
         candidate_rows.append(row)
         write_json(out_dir / "oda_score_calibration_repair_manifest.json", {"status": "running", "candidate_rows": candidate_rows})
