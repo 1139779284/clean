@@ -7,6 +7,7 @@ from typing import Any, Mapping, Sequence
 
 import torch
 
+from model_security_gate.adapters.yolo_ultralytics import UltralyticsYOLOAdapter
 from model_security_gate.detox.external_hard_suite import (
     ExternalHardSuiteConfig,
     append_external_replay_samples,
@@ -26,9 +27,14 @@ from model_security_gate.detox.oda_postnms_repair import (
     _select_attack_names,
     _target_ids_from_names,
 )
-from model_security_gate.detox.oda_score_calibration import oda_score_calibration_loss, semantic_negative_guard_loss
+from model_security_gate.detox.oda_score_calibration import (
+    oda_score_calibration_loss,
+    semantic_fp_region_guard_loss,
+    semantic_negative_guard_loss,
+)
 from model_security_gate.detox.strong_train import _torch_model, load_ultralytics_yolo, save_ultralytics_yolo
 from model_security_gate.detox.yolo_dataset import make_yolo_dataloader, move_batch_to_device
+from model_security_gate.utils.io import read_image_bgr
 from model_security_gate.utils.io import write_json
 
 
@@ -77,6 +83,7 @@ class ODAScoreCalibrationRepairConfig:
     lambda_task: float = 0.0
     lambda_oga_negative: float = 0.0
     lambda_semantic_negative: float = 0.0
+    lambda_semantic_fp_region: float = 0.0
 
     score_iou_threshold: float = 0.03
     score_center_radius: float = 2.0
@@ -93,6 +100,11 @@ class ODAScoreCalibrationRepairConfig:
     semantic_negative_topk: int = 256
     semantic_negative_max_score: float = 0.05
     semantic_negative_margin_weight: float = 0.50
+    semantic_fp_region_topk: int = 64
+    semantic_fp_region_iou_threshold: float = 0.03
+    semantic_fp_region_center_radius: float = 2.0
+    semantic_fp_region_max_score: float = 0.03
+    semantic_fp_region_margin_weight: float = 1.0
 
     max_single_attack_worsen: float = 0.02
     max_allowed_external_asr: float = 0.10
@@ -163,6 +175,119 @@ def _select_calibration_candidate(
     }
 
 
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _matches_attack_name(attack: str, selected_names: Sequence[str]) -> bool:
+    if not selected_names:
+        return True
+    low = str(attack).lower()
+    for name in selected_names:
+        n = str(name).lower()
+        if n == low or n in low or low in n:
+            return True
+    return False
+
+
+def _map_xyxy_to_train_space(
+    xyxy: Sequence[float],
+    image_shape: Sequence[int],
+    imgsz: int,
+    *,
+    letterbox: bool,
+) -> list[float]:
+    h, w = int(image_shape[0]), int(image_shape[1])
+    x1, y1, x2, y2 = [float(v) for v in xyxy]
+    if letterbox:
+        scale = min(float(imgsz) / max(h, 1), float(imgsz) / max(w, 1))
+        nw, nh = int(round(w * scale)), int(round(h * scale))
+        dx = float((int(imgsz) - nw) // 2)
+        dy = float((int(imgsz) - nh) // 2)
+        return [x1 * scale + dx, y1 * scale + dy, x2 * scale + dx, y2 * scale + dy]
+    sx = float(imgsz) / max(w, 1)
+    sy = float(imgsz) / max(h, 1)
+    return [x1 * sx, y1 * sy, x2 * sx, y2 * sy]
+
+
+def _build_semantic_fp_regions(
+    cfg: ODAScoreCalibrationRepairConfig,
+    rows: Sequence[Mapping[str, Any]],
+    target_ids: Sequence[int],
+    guard_names: Sequence[str],
+    output_dir: Path,
+) -> dict[str, list[list[float]]]:
+    """Record model-predicted target FP boxes for semantic target-absent rows.
+
+    These regions are in the repair dataloader coordinate system, so the loss
+    can suppress the exact raw candidates that survive as final semantic FPs.
+    """
+    if float(cfg.lambda_semantic_fp_region) <= 0:
+        return {}
+    adapter = UltralyticsYOLOAdapter(
+        cfg.model,
+        device=cfg.device,
+        default_conf=float(cfg.conf),
+        default_iou=0.7,
+        default_imgsz=int(cfg.imgsz),
+    )
+    target_set = {int(x) for x in target_ids}
+    selected_guard_names = list(guard_names)
+    region_map: dict[str, list[list[float]]] = {}
+    metadata: list[dict[str, Any]] = []
+    for row in rows:
+        attack = str(row.get("attack") or "")
+        goal = infer_attack_goal(str(row.get("goal") or attack))
+        if goal != "semantic" or not _truthy(row.get("success")):
+            continue
+        if selected_guard_names and not _matches_attack_name(attack, selected_guard_names):
+            continue
+        if _truthy(row.get("has_gt_target")) or int(float(row.get("n_gt_target") or 0)) > 0:
+            continue
+        image = row.get("image")
+        if not image:
+            continue
+        image_path = Path(str(image))
+        try:
+            img = read_image_bgr(image_path)
+        except Exception:
+            continue
+        dets = adapter.predict_image(image_path, conf=float(cfg.conf), imgsz=int(cfg.imgsz))
+        regions = [
+            _map_xyxy_to_train_space(det.xyxy, img.shape[:2], int(cfg.imgsz), letterbox=bool(cfg.letterbox_train))
+            for det in dets
+            if int(det.cls_id) in target_set
+        ]
+        if not regions:
+            continue
+        keys = {
+            str(image_path),
+            str(image_path.resolve()) if image_path.exists() else str(image_path),
+            image_path.name,
+            image_path.stem,
+        }
+        for key in keys:
+            region_map.setdefault(key, []).extend(regions)
+        metadata.append(
+            {
+                "attack": attack,
+                "image": str(image_path),
+                "n_regions": len(regions),
+                "regions": regions,
+                "max_target_conf": row.get("max_target_conf"),
+            }
+        )
+    write_json(
+        output_dir / "semantic_fp_regions.json",
+        {"n_images": len(metadata), "n_keys": len(region_map), "rows": metadata},
+    )
+    return region_map
+
+
 def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> dict[str, Any]:
     out_dir = Path(cfg.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -223,17 +348,24 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
         attack_names,
         before.get("rows") or [],
     )
+    attack_datasets = discover_external_attack_datasets(cfg.external_roots)
+    guard_names = list(cfg.guard_attack_names) or [
+        ds.name
+        for ds in attack_datasets
+        if infer_attack_goal(ds.name if ds.goal == "auto" else ds.goal) in {"oga", "semantic"}
+    ]
+    semantic_fp_regions = _build_semantic_fp_regions(cfg, before.get("rows") or [], target_ids, guard_names, out_dir)
+
     guard_stats: dict[str, Any] = {"added": 0}
+    semantic_fp_replay_stats: dict[str, Any] = {"added": 0}
     if (
-        (float(cfg.lambda_oga_negative) > 0 or float(cfg.lambda_semantic_negative) > 0)
+        (
+            float(cfg.lambda_oga_negative) > 0
+            or float(cfg.lambda_semantic_negative) > 0
+            or float(cfg.lambda_semantic_fp_region) > 0
+        )
         and int(cfg.guard_replay_max_images_per_attack) > 0
     ):
-        attack_datasets = discover_external_attack_datasets(cfg.external_roots)
-        guard_names = list(cfg.guard_attack_names) or [
-            ds.name
-            for ds in attack_datasets
-            if infer_attack_goal(ds.name if ds.goal == "auto" else ds.goal) in {"oga", "semantic"}
-        ]
         if guard_names:
             guard_stats = append_external_replay_samples(
                 output_dataset_dir=out_dir / "01_postnms_failure_dataset",
@@ -246,6 +378,29 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
                 failure_rows=before.get("rows") or [],
                 failure_only=bool(cfg.guard_failure_only),
                 repeat=int(cfg.guard_repeat),
+            )
+    if (
+        float(cfg.lambda_semantic_fp_region) > 0
+        and semantic_fp_regions
+        and int(cfg.guard_replay_max_images_per_attack) > 0
+    ):
+        semantic_guard_names = [
+            name
+            for name in guard_names
+            if infer_attack_goal(str(name)) == "semantic" or any(keyword.lower() in str(name).lower() for keyword in cfg.semantic_guard_keywords)
+        ]
+        if semantic_guard_names:
+            semantic_fp_replay_stats = append_external_replay_samples(
+                output_dataset_dir=out_dir / "01_postnms_failure_dataset",
+                attack_datasets=attack_datasets,
+                target_class_ids=target_ids,
+                selected_attack_names=semantic_guard_names,
+                max_images_per_attack=int(cfg.guard_replay_max_images_per_attack),
+                split="train",
+                seed=int(cfg.seed) + 29,
+                failure_rows=before.get("rows") or [],
+                failure_only=True,
+                repeat=max(1, int(cfg.guard_repeat)),
             )
 
     device = _device_from_string(cfg.device)
@@ -274,7 +429,16 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
     scaler = torch.cuda.amp.GradScaler(enabled=bool(cfg.amp and device.type == "cuda"))
 
     log_path = out_dir / "oda_score_calibration_train_log.csv"
-    fields = ["epoch", "step", "loss_total", "loss_score_calibration", "loss_task", "loss_oga", "loss_semantic"]
+    fields = [
+        "epoch",
+        "step",
+        "loss_total",
+        "loss_score_calibration",
+        "loss_task",
+        "loss_oga",
+        "loss_semantic",
+        "loss_semantic_fp_region",
+    ]
     with log_path.open("w", newline="", encoding="utf-8") as f:
         csv.DictWriter(f, fieldnames=fields).writeheader()
 
@@ -327,7 +491,23 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
                     if cfg.lambda_semantic_negative > 0
                     else loss_score * 0.0
                 )
-                loss_total = loss_score + loss_task + loss_oga + loss_semantic
+                loss_semantic_fp = (
+                    semantic_fp_region_guard_loss(
+                        pred,
+                        batch,
+                        target_ids,
+                        semantic_fp_regions,
+                        topk=int(cfg.semantic_fp_region_topk),
+                        max_target_score=float(cfg.semantic_fp_region_max_score),
+                        iou_threshold=float(cfg.semantic_fp_region_iou_threshold),
+                        center_radius=float(cfg.semantic_fp_region_center_radius),
+                        margin_weight=float(cfg.semantic_fp_region_margin_weight),
+                    )
+                    * float(cfg.lambda_semantic_fp_region)
+                    if cfg.lambda_semantic_fp_region > 0 and semantic_fp_regions
+                    else loss_score * 0.0
+                )
+                loss_total = loss_score + loss_task + loss_oga + loss_semantic + loss_semantic_fp
             scaler.scale(loss_total).backward()
             if cfg.grad_clip_norm and cfg.grad_clip_norm > 0:
                 scaler.unscale_(optimizer)
@@ -344,6 +524,7 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
                         "loss_task": float(loss_task.detach().cpu().item()),
                         "loss_oga": float(loss_oga.detach().cpu().item()),
                         "loss_semantic": float(loss_semantic.detach().cpu().item()),
+                        "loss_semantic_fp_region": float(loss_semantic_fp.detach().cpu().item()),
                     }
                 )
 
@@ -422,6 +603,12 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
         "replay_stats": replay_stats,
         "clean_anchor_stats": clean_stats,
         "guard_stats": guard_stats,
+        "semantic_fp_replay_stats": semantic_fp_replay_stats,
+        "semantic_fp_region_stats": {
+            "n_keys": len(semantic_fp_regions),
+            "n_regions": sum(len(v) for v in semantic_fp_regions.values()),
+            "json": str(out_dir / "semantic_fp_regions.json"),
+        },
         "n_failure_rows": len(failure_rows),
         "log_csv": str(log_path),
         "candidate_rows": candidate_rows,

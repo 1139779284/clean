@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Sequence
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Sequence
 
 import torch
 import torch.nn.functional as F
@@ -269,6 +270,128 @@ def semantic_negative_guard_loss(
             probs = _score_to_prob(scores)
             loss = loss + F.relu(probs.max() - float(max_target_score)).pow(2) * float(margin_weight)
         losses.append(loss)
+    if not losses:
+        return pred.sum() * 0.0
+    return torch.stack(losses).mean()
+
+
+def _lookup_fp_regions(
+    fp_regions_by_image: Mapping[str, Sequence[Sequence[float]]] | None,
+    image_name: str,
+) -> List[Sequence[float]]:
+    if not fp_regions_by_image:
+        return []
+    low = str(image_name).lower().replace("\\", "/")
+    base = Path(low).name
+    stem = Path(base).stem
+    regions: List[Sequence[float]] = []
+    seen: set[tuple[float, float, float, float]] = set()
+    for key, value in fp_regions_by_image.items():
+        key_low = str(key).lower().replace("\\", "/")
+        key_base = Path(key_low).name
+        key_stem = Path(key_base).stem
+        if (
+            low == key_low
+            or low.endswith(key_low)
+            or base == key_base
+            or (key_stem and key_stem in low)
+            or (stem and stem in key_low)
+        ):
+            for region in value:
+                if len(region) < 4:
+                    continue
+                signature = tuple(round(float(v), 3) for v in region[:4])
+                if signature in seen:
+                    continue
+                seen.add(signature)
+                regions.append(region)
+    return regions
+
+
+def semantic_fp_region_guard_loss(
+    prediction: Any,
+    batch: Dict[str, Any],
+    target_class_ids: Sequence[int],
+    fp_regions_by_image: Mapping[str, Sequence[Sequence[float]]] | None,
+    *,
+    topk: int = 64,
+    max_target_score: float = 0.03,
+    iou_threshold: float = 0.03,
+    center_radius: float = 2.0,
+    margin_weight: float = 1.0,
+) -> torch.Tensor:
+    """Suppress target scores only around known semantic false-positive regions.
+
+    The final residual smoke failure is a target-absent semantic image whose
+    final false ``helmet`` box maps directly to high raw target candidates. A
+    global semantic-negative guard can disturb ODA score calibration, so this
+    loss is deliberately surgical:
+
+    - it only acts on images with a recorded FP region;
+    - it skips target-present images;
+    - it suppresses target scores on candidates geometrically near that FP box.
+    """
+    pred = _extract_prediction(prediction)
+    if pred is None or pred.shape[1] < 5 or not target_class_ids:
+        return _zero_from_prediction(prediction, batch)
+    device = pred.device
+    target_ids = [int(x) for x in target_class_ids if 0 <= int(x) < pred.shape[1] - 4]
+    if not target_ids:
+        return pred.sum() * 0.0
+    cls = batch.get("cls", torch.zeros((0, 1), device=device)).view(-1).long().to(device)
+    bidx = batch.get("batch_idx", torch.zeros((0,), device=device)).long().to(device)
+    target_tensor = torch.tensor(target_ids, device=device, dtype=torch.long)
+    files = batch.get("im_file") or []
+    img_h = float(batch["img"].shape[-2])
+    img_w = float(batch["img"].shape[-1])
+    target_channels = [4 + cid for cid in target_ids]
+    losses: List[torch.Tensor] = []
+
+    for image_index in range(pred.shape[0]):
+        image_name = str(files[image_index]) if image_index < len(files) else ""
+        regions = _lookup_fp_regions(fp_regions_by_image, image_name)
+        if not regions:
+            continue
+        same = bidx == int(image_index)
+        if bool(same.any()):
+            same_cls = cls[same]
+            if bool((same_cls[:, None] == target_tensor[None, :]).any()):
+                continue
+
+        image_pred = pred[image_index]
+        pred_xywh = image_pred[:4].transpose(0, 1)
+        pred_xyxy = _xywh_to_xyxy_pixels(pred_xywh, img_w=img_w, img_h=img_h)
+        image_losses: List[torch.Tensor] = []
+        for region in regions:
+            if len(region) < 4:
+                continue
+            region_xyxy = torch.tensor([float(v) for v in region[:4]], device=device, dtype=pred.dtype)
+            region_xyxy[[0, 2]] = region_xyxy[[0, 2]].clamp(0.0, float(img_w))
+            region_xyxy[[1, 3]] = region_xyxy[[1, 3]].clamp(0.0, float(img_h))
+            rw = (region_xyxy[2] - region_xyxy[0]).clamp_min(1.0)
+            rh = (region_xyxy[3] - region_xyxy[1]).clamp_min(1.0)
+            rx = (region_xyxy[0] + region_xyxy[2]) / 2.0
+            ry = (region_xyxy[1] + region_xyxy[3]) / 2.0
+            dx = (pred_xywh[:, 0] - rx).abs() / (rw / 2.0 * float(center_radius)).clamp_min(1.0)
+            dy = (pred_xywh[:, 1] - ry).abs() / (rh / 2.0 * float(center_radius)).clamp_min(1.0)
+            center_match = (dx <= 1.0) & (dy <= 1.0)
+            ious = _box_iou_xyxy(pred_xyxy, region_xyxy.view(1, 4)).view(-1)
+            candidate_idx = torch.where(center_match | (ious >= float(iou_threshold)))[0]
+            if candidate_idx.numel() == 0:
+                dist = dx.square() + dy.square()
+                candidate_idx = torch.topk(-dist, k=min(max(1, int(topk)), int(dist.numel()))).indices
+            scores = image_pred[target_channels][:, candidate_idx].reshape(-1)
+            if scores.numel() == 0:
+                continue
+            scores = torch.topk(scores, k=min(max(1, int(topk)), int(scores.numel()))).values
+            loss = _score_to_negative_bce(scores)
+            if margin_weight > 0:
+                probs = _score_to_prob(scores)
+                loss = loss + F.relu(probs.max() - float(max_target_score)).pow(2) * float(margin_weight)
+            image_losses.append(loss)
+        if image_losses:
+            losses.append(torch.stack(image_losses).mean())
+
     if not losses:
         return pred.sum() * 0.0
     return torch.stack(losses).mean()

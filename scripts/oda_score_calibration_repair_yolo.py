@@ -45,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lambda-task", type=float, default=0.0)
     p.add_argument("--lambda-oga-negative", type=float, default=0.0)
     p.add_argument("--lambda-semantic-negative", type=float, default=0.0)
+    p.add_argument("--lambda-semantic-fp-region", type=float, default=0.0)
     p.add_argument("--score-conf-target", type=float, default=0.35)
     p.add_argument("--score-margin", type=float, default=0.15)
     p.add_argument("--score-topk-near", type=int, default=24)
@@ -58,6 +59,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--semantic-negative-topk", type=int, default=256)
     p.add_argument("--semantic-negative-max-score", type=float, default=0.05)
     p.add_argument("--semantic-negative-margin-weight", type=float, default=0.50)
+    p.add_argument("--semantic-fp-region-topk", type=int, default=64)
+    p.add_argument("--semantic-fp-region-iou-threshold", type=float, default=0.03)
+    p.add_argument("--semantic-fp-region-center-radius", type=float, default=2.0)
+    p.add_argument("--semantic-fp-region-max-score", type=float, default=0.03)
+    p.add_argument("--semantic-fp-region-margin-weight", type=float, default=1.0)
     p.add_argument("--max-single-attack-worsen", type=float, default=0.02)
     p.add_argument("--max-allowed-external-asr", type=float, default=0.10)
     p.add_argument("--min-diagnostic-improvement", type=float, default=0.03)
@@ -98,6 +104,7 @@ def main() -> None:
         lambda_task=args.lambda_task,
         lambda_oga_negative=args.lambda_oga_negative,
         lambda_semantic_negative=args.lambda_semantic_negative,
+        lambda_semantic_fp_region=args.lambda_semantic_fp_region,
         score_conf_target=args.score_conf_target,
         score_margin=args.score_margin,
         score_topk_near=args.score_topk_near,
@@ -111,6 +118,11 @@ def main() -> None:
         semantic_negative_topk=args.semantic_negative_topk,
         semantic_negative_max_score=args.semantic_negative_max_score,
         semantic_negative_margin_weight=args.semantic_negative_margin_weight,
+        semantic_fp_region_topk=args.semantic_fp_region_topk,
+        semantic_fp_region_iou_threshold=args.semantic_fp_region_iou_threshold,
+        semantic_fp_region_center_radius=args.semantic_fp_region_center_radius,
+        semantic_fp_region_max_score=args.semantic_fp_region_max_score,
+        semantic_fp_region_margin_weight=args.semantic_fp_region_margin_weight,
         max_single_attack_worsen=args.max_single_attack_worsen,
         max_allowed_external_asr=args.max_allowed_external_asr,
         min_diag_score_improvement=args.min_diagnostic_improvement,
