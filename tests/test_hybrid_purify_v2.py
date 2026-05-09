@@ -39,6 +39,13 @@ def test_candidate_improved_accepts_same_max_lower_external_mean():
     assert _candidate_improved(candidate, best, cfg)
 
 
+def test_candidate_improved_rejects_higher_external_max_even_with_better_score():
+    cfg = HybridPurifyConfig(min_selection_improvement=0.005, min_external_asr_improvement=0.001)
+    best = {"selection_score": 0.3316, "external_max_asr": 0.10, "external_mean_asr": 0.05}
+    candidate = {"selection_score": 0.2800, "external_max_asr": 0.20, "external_mean_asr": 0.04}
+    assert not _candidate_improved(candidate, best, cfg)
+
+
 def test_candidate_block_reasons_report_map_and_attack_failures():
     cfg = HybridPurifyConfig(max_map_drop=0.03)
     item = {

@@ -1,61 +1,96 @@
-# Reproducible config for scripts/oda_score_calibration_repair_yolo.py.
-# This file freezes the current targeted repair protocol around the alpha_0p08
-# candidate: local semantic FP suppression is useful only when ODA/OGA/WaNet and
-# clean-mAP no-worse gates are evaluated in the same run.
+# T1-oriented threshold-aware joint no-worse score-calibration repair.
+# Consumable by:
+#   python scripts/oda_score_calibration_repair_yolo.py --config configs/oda_score_calibration_repair.yaml
+# Adjust paths when applying outside this handoff layout.
+oda_score_calibration_repair:
+  model: ../artifacts/current_best/pareto_global_alpha_0p08.pt
+  data_yaml: ../data/datasets/helmet_head_yolo_val_light/data.yaml
+  out_dir: ../runs/t1_threshold_no_worse_repair
+  external_roots:
+    - ../data/poison_benchmark_cuda_tuned_light
+  target_classes: [helmet]
+  attack_names: [badnet_oda]
+  guard_attack_names: [blend_oga, semantic_green_cleanlabel, wanet_oga]
+  device: null
 
-model: runs/pareto_global_alpha_0p08.pt
-output_dir: runs/oda_score_calibration_repair
-
-data:
-  clean_data_yaml: data/clean/data.yaml
-  external_suite_dir: data/external_hard_suite
-  image_size: 640
-  max_images: 20
-
-repair:
-  epochs: 3
-  batch_size: 4
-  lr: 0.00001
-  optimizer: adamw
-  weight_decay: 0.0005
-  freeze_backbone: true
-  repair_head_only: true
+  imgsz: 416
+  conf: 0.25
+  low_conf: 0.001
+  batch: 3
+  letterbox_train: false
+  epochs: 6
+  lr: 0.000005
+  weight_decay: 0.00001
+  grad_clip_norm: 3.0
+  amp: false
   seed: 1337
 
-score_calibration:
-  target_class_name: helmet
-  lambda_score: 1.0
-  lambda_task: 0.25
-  lambda_oga: 0.75
-  lambda_semantic_negative: 1.0
-  lambda_semantic_fp_region: 2.0
-  # The region should be filled from diagnostics for the known semantic FP.
-  # Example: [x1, y1, x2, y2] in image pixels after letterbox-normalized input.
-  semantic_fp_region_xyxy: null
-  semantic_fp_region_min_iou: 0.0
-  target_absent_score_cap: 0.25
-  semantic_fp_score_cap: 0.25
+  # Frozen baseline teacher is a no-worse drift anchor, not a clean-teacher claim.
+  use_baseline_teacher: true
+  teacher_model: null
 
-hard_gates:
-  badnet_oda_max_asr: 0.05
-  semantic_green_cleanlabel_max_asr: 0.0
-  blend_oga_max_asr: 0.0
-  wanet_oga_max_asr: 0.0
-  external_max_asr: 0.05
-  external_mean_asr: 0.05
-  semantic_target_absent_max_conf: 0.25
-  max_map50_95_drop: 0.03
-  no_per_attack_regression: true
+  # Use enough images for actual candidate selection. Lower these only for smoke.
+  max_images_per_attack: 300
+  replay_max_images_per_attack: 300
+  failure_repeat: 48
+  clean_anchor_images: 64
+  clean_anchor_seed: 1337
+  guard_replay_max_images_per_attack: 300
+  guard_repeat: 4
+  guard_failure_only: false
 
-replay:
-  include_external_replay: true
-  include_clean_anchor: true
-  include_oda_positive_anchor: true
-  include_oga_target_absent_guard: true
-  include_wanet_guard: true
-  replay_repeat: 2
+  lambda_score_calibration: 6.0
+  lambda_task: 0.02
+  lambda_oga_negative: 0.10
+  lambda_semantic_negative: 1.50
+  lambda_semantic_fp_region: 8.0
+  lambda_oda_matched_anchor: 1.0
+  lambda_oda_floor: 1.50
+  lambda_target_absent_teacher_cap: 1.0
 
-artifacts:
-  save_candidate_every_epoch: true
-  write_resolved_config: true
-  write_candidate_manifest: true
+  score_iou_threshold: 0.03
+  score_center_radius: 2.0
+  score_topk_near: 32
+  score_topk_far: 128
+  score_conf_target: 0.35
+  score_margin: 0.15
+  score_positive_bce_weight: 0.35
+  score_floor_weight: 1.0
+  score_far_margin_weight: 0.65
+  score_competing_margin_weight: 0.35
+  score_teacher_weight: 0.40
+
+  semantic_guard_keywords: [semantic]
+  semantic_negative_topk: 256
+  semantic_negative_max_score: 0.25
+  semantic_negative_margin_weight: 4.0
+  semantic_negative_bce_weight: 0.0
+  semantic_negative_active_margin: 0.03
+
+  semantic_fp_region_topk: 96
+  semantic_fp_region_iou_threshold: 0.03
+  semantic_fp_region_center_radius: 2.5
+  semantic_fp_region_max_score: 0.25
+  semantic_fp_region_margin_weight: 8.0
+  semantic_fp_region_bce_weight: 0.0
+  semantic_fp_region_active_margin: 0.05
+
+  target_absent_teacher_cap_topk: 256
+  target_absent_teacher_cap_max_score: 0.25
+  target_absent_teacher_cap_margin: 0.02
+  oda_floor_min_score: 0.25
+  oda_floor_teacher_margin: 0.02
+  oda_matched_min_score: 0.45
+  oda_matched_topk: 32
+
+  max_attack_asr:
+    badnet_oda: 0.05
+    semantic_green_cleanlabel: 0.0
+    blend_oga: 0.0
+    wanet_oga: 0.0
+  semantic_fp_required_max_conf: 0.25
+  max_single_attack_worsen: 0.0
+  max_allowed_external_asr: 0.05
+  min_external_score_improvement: 0.000001
+  require_external_improvement_for_final: true
+  min_diag_score_improvement: 0.03

@@ -1,0 +1,19 @@
+# Automatic profile ladder. Each profile starts from the same input model and
+# accepts only candidates that pass hard per-attack constraints.
+model: runs/pareto_letterbox_joint_merge_fine_2026-05-07/models/pareto_global_alpha_0p08.pt
+data_yaml: data/datasets/helmet_head_yolo_val_light/data.yaml
+out_dir: runs/frontier_t1_auto_semantic_detox
+external_roots:
+  - data/poison_benchmark_cuda_tuned_light
+target_classes: [helmet]
+semantic_attack_names: [semantic_green_cleanlabel]
+guard_attack_names: [badnet_oda, blend_oga, semantic_green_cleanlabel, wanet_oga]
+level: last_mile
+max_attack_asr:
+  badnet_oda: 0.05
+  semantic_green_cleanlabel: 0.0
+  blend_oga: 0.0
+  wanet_oga: 0.0
+semantic_fp_required_max_conf: 0.25
+max_single_attack_worsen: 0.0
+max_allowed_external_asr: 0.05

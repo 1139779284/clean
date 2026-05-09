@@ -34,6 +34,43 @@ def _select_top_indices(values: torch.Tensor, k: int) -> torch.Tensor:
     return torch.topk(values, k=min(max(1, int(k)), int(values.numel()))).indices
 
 
+
+
+def _threshold_aware_negative_cap_loss(
+    scores: torch.Tensor,
+    *,
+    max_target_score: float,
+    negative_bce_weight: float = 1.0,
+    margin_weight: float = 1.0,
+    active_margin: float | None = None,
+) -> torch.Tensor:
+    """Suppress target scores only as much as needed to cross a score cap.
+
+    The original semantic guards used full negative BCE on every selected score.
+    That reliably removes known target-absent FPs, but it can also over-suppress
+    the shared target head and regress ODA. In threshold-aware mode only scores
+    inside the active band around the production cap receive gradient.
+    """
+    if scores.numel() == 0:
+        return scores.sum() * 0.0
+    probs = _score_to_prob(scores)
+    active_scores = scores
+    active_probs = probs
+    if active_margin is not None:
+        threshold = float(max_target_score) - float(active_margin)
+        active = probs.detach() >= threshold
+        if not bool(active.any()):
+            return scores.sum() * 0.0
+        active_scores = scores[active]
+        active_probs = probs[active]
+    loss = active_scores.sum() * 0.0
+    if negative_bce_weight > 0:
+        loss = loss + _score_to_negative_bce(active_scores) * float(negative_bce_weight)
+    if margin_weight > 0:
+        loss = loss + F.relu(active_probs.max() - float(max_target_score)).pow(2) * float(margin_weight)
+    return loss
+
+
 def oda_score_calibration_loss(
     prediction: Any,
     batch: Dict[str, Any],
@@ -224,6 +261,8 @@ def semantic_negative_guard_loss(
     topk: int = 256,
     max_target_score: float = 0.05,
     margin_weight: float = 0.50,
+    negative_bce_weight: float = 1.0,
+    active_margin: float | None = None,
 ) -> torch.Tensor:
     """Suppress target scores on semantic target-absent guard images only.
 
@@ -265,10 +304,13 @@ def semantic_negative_guard_loss(
         if scores.numel() == 0:
             continue
         scores = torch.topk(scores, k=min(max(1, int(topk)), int(scores.numel()))).values
-        loss = _score_to_negative_bce(scores)
-        if margin_weight > 0:
-            probs = _score_to_prob(scores)
-            loss = loss + F.relu(probs.max() - float(max_target_score)).pow(2) * float(margin_weight)
+        loss = _threshold_aware_negative_cap_loss(
+            scores,
+            max_target_score=float(max_target_score),
+            negative_bce_weight=float(negative_bce_weight),
+            margin_weight=float(margin_weight),
+            active_margin=active_margin,
+        )
         losses.append(loss)
     if not losses:
         return pred.sum() * 0.0
@@ -319,6 +361,8 @@ def semantic_fp_region_guard_loss(
     iou_threshold: float = 0.03,
     center_radius: float = 2.0,
     margin_weight: float = 1.0,
+    negative_bce_weight: float = 1.0,
+    active_margin: float | None = None,
 ) -> torch.Tensor:
     """Suppress target scores only around known semantic false-positive regions.
 
@@ -384,10 +428,13 @@ def semantic_fp_region_guard_loss(
             if scores.numel() == 0:
                 continue
             scores = torch.topk(scores, k=min(max(1, int(topk)), int(scores.numel()))).values
-            loss = _score_to_negative_bce(scores)
-            if margin_weight > 0:
-                probs = _score_to_prob(scores)
-                loss = loss + F.relu(probs.max() - float(max_target_score)).pow(2) * float(margin_weight)
+            loss = _threshold_aware_negative_cap_loss(
+                scores,
+                max_target_score=float(max_target_score),
+                negative_bce_weight=float(negative_bce_weight),
+                margin_weight=float(margin_weight),
+                active_margin=active_margin,
+            )
             image_losses.append(loss)
         if image_losses:
             losses.append(torch.stack(image_losses).mean())
@@ -395,3 +442,126 @@ def semantic_fp_region_guard_loss(
     if not losses:
         return pred.sum() * 0.0
     return torch.stack(losses).mean()
+
+def localized_target_score_floor_loss(
+    prediction: Any,
+    batch: Dict[str, Any],
+    target_class_ids: Sequence[int],
+    *,
+    teacher_prediction: Any | None = None,
+    iou_threshold: float = 0.03,
+    center_radius: float = 2.0,
+    topk_near: int = 24,
+    min_score: float = 0.25,
+    teacher_margin: float = 0.02,
+) -> torch.Tensor:
+    """No-worse ODA anchor for target-present samples.
+
+    For each target-class GT, prevent the repaired model from dropping below
+    the stronger of a production floor and the frozen baseline teacher near the
+    localized GT candidates. This anchors ODA while semantic FP suppression is
+    applied elsewhere.
+    """
+    pred = _extract_prediction(prediction)
+    if pred is None or pred.shape[1] < 5 or not target_class_ids:
+        return _zero_from_prediction(prediction, batch)
+    teacher_pred = _extract_prediction(teacher_prediction) if teacher_prediction is not None else None
+    if teacher_pred is None or teacher_pred.shape[1] < pred.shape[1]:
+        return pred.sum() * 0.0
+    device = pred.device
+    cls = batch.get("cls", torch.zeros((0, 1), device=device)).view(-1).long().to(device)
+    bboxes = batch.get("bboxes", torch.zeros((0, 4), device=device)).float().to(device)
+    bidx = batch.get("batch_idx", torch.zeros((0,), device=device)).long().to(device)
+    label_indices = _target_label_indices(batch, target_class_ids, device)
+    if label_indices.numel() == 0 or bboxes.numel() == 0:
+        return pred.sum() * 0.0
+    img_h = float(batch["img"].shape[-2])
+    img_w = float(batch["img"].shape[-1])
+    nc = pred.shape[1] - 4
+    losses: List[torch.Tensor] = []
+    for label_index in label_indices.tolist():
+        image_index = int(bidx[label_index].item())
+        cid = int(cls[label_index].item())
+        if image_index < 0 or image_index >= pred.shape[0] or cid < 0 or cid >= nc:
+            continue
+        image_pred = pred[image_index]
+        pred_xywh = image_pred[:4].transpose(0, 1)
+        gt_xywhn = bboxes[label_index]
+        gt_xc = gt_xywhn[0] * img_w
+        gt_yc = gt_xywhn[1] * img_h
+        gt_w = gt_xywhn[2].clamp_min(1e-6) * img_w
+        gt_h = gt_xywhn[3].clamp_min(1e-6) * img_h
+        gt_xyxy = torch.stack([gt_xc - gt_w / 2.0, gt_yc - gt_h / 2.0, gt_xc + gt_w / 2.0, gt_yc + gt_h / 2.0])
+        near_idx = _near_candidate_indices(
+            pred_xywh, gt_xc, gt_yc, gt_w, gt_h, gt_xyxy,
+            img_w=img_w, img_h=img_h,
+            iou_threshold=float(iou_threshold), center_radius=float(center_radius), topk=int(topk_near),
+        )
+        if near_idx.numel() == 0:
+            continue
+        class_channel = 4 + cid
+        student_prob = _score_to_prob(image_pred[class_channel, near_idx]).max()
+        with torch.no_grad():
+            teacher_prob = _score_to_prob(teacher_pred[image_index, class_channel, near_idx]).max()
+            floor = torch.maximum(
+                torch.tensor(float(min_score), device=device, dtype=student_prob.dtype),
+                (teacher_prob - float(teacher_margin)).clamp_min(0.0),
+            )
+        losses.append(F.relu(floor - student_prob).pow(2))
+    if not losses:
+        return pred.sum() * 0.0
+    return torch.stack(losses).mean()
+
+
+def target_absent_teacher_cap_loss(
+    prediction: Any,
+    batch: Dict[str, Any],
+    target_class_ids: Sequence[int],
+    *,
+    teacher_prediction: Any | None = None,
+    topk: int = 256,
+    max_target_score: float = 0.25,
+    teacher_margin: float = 0.02,
+) -> torch.Tensor:
+    """No-worse target-absent anchor for OGA/semantic/WaNet replay samples.
+
+    On images without target-class labels, the repaired model should not create
+    new high target-class scores above the production cap or above the frozen
+    baseline teacher plus margin.
+    """
+    pred = _extract_prediction(prediction)
+    if pred is None or pred.shape[1] < 5 or not target_class_ids:
+        return _zero_from_prediction(prediction, batch)
+    teacher_pred = _extract_prediction(teacher_prediction) if teacher_prediction is not None else None
+    device = pred.device
+    cls = batch.get("cls", torch.zeros((0, 1), device=device)).view(-1).long().to(device)
+    bidx = batch.get("batch_idx", torch.zeros((0,), device=device)).long().to(device)
+    target_ids = [int(x) for x in target_class_ids if 0 <= int(x) < pred.shape[1] - 4]
+    if not target_ids:
+        return pred.sum() * 0.0
+    target_tensor = torch.tensor(target_ids, device=device, dtype=torch.long)
+    target_channels = [4 + cid for cid in target_ids]
+    losses: List[torch.Tensor] = []
+    for image_index in range(pred.shape[0]):
+        same = bidx == int(image_index)
+        if bool(same.any()):
+            same_cls = cls[same]
+            if bool((same_cls[:, None] == target_tensor[None, :]).any()):
+                continue
+        scores = pred[image_index, target_channels, :].reshape(-1)
+        if scores.numel() == 0:
+            continue
+        k = min(max(1, int(topk)), int(scores.numel()))
+        selected = torch.topk(_score_to_prob(scores), k=k).values
+        cap = torch.full_like(selected, float(max_target_score))
+        if teacher_pred is not None and image_index < teacher_pred.shape[0] and teacher_pred.shape[1] >= pred.shape[1]:
+            with torch.no_grad():
+                t_scores = teacher_pred[image_index, target_channels, :].reshape(-1)
+                t_probs = torch.topk(_score_to_prob(t_scores), k=min(k, int(t_scores.numel()))).values
+                if t_probs.numel() == selected.numel():
+                    cap = torch.minimum(cap, (t_probs + float(teacher_margin)).clamp(0.0, 1.0))
+        losses.append(F.relu(selected - cap).pow(2).mean())
+    if not losses:
+        return pred.sum() * 0.0
+    return torch.stack(losses).mean()
+

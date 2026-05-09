@@ -1,0 +1,34 @@
+# Frontier last-mile repair for the current alpha_0p08 Pareto boundary.
+model: runs/pareto_letterbox_joint_merge_fine_2026-05-07/models/pareto_global_alpha_0p08.pt
+data_yaml: data/datasets/helmet_head_yolo_val_light/data.yaml
+out_dir: runs/semantic_surgical_last_mile
+external_roots:
+  - data/poison_benchmark_cuda_tuned_light
+target_classes: [helmet]
+semantic_attack_names: [semantic_green_cleanlabel]
+guard_attack_names: [badnet_oda, blend_oga, semantic_green_cleanlabel, wanet_oga]
+imgsz: 416
+conf: 0.25
+batch: 1
+max_images_per_attack: 20
+replay_max_images_per_attack: 20
+semantic_failure_repeat: 24
+guard_repeat: 2
+max_steps: 8
+candidate_every_steps: 1
+lr: 0.0000003
+trainable_scope: head_bias
+lambda_semantic_fp_threshold: 8.0
+lambda_teacher_stability: 80.0
+lambda_oda_preserve: 18.0
+lambda_target_absent_nonexpansion: 12.0
+lambda_l2sp: 1500.0
+semantic_fp_cap: 0.245
+semantic_fp_required_max_conf: 0.25
+max_single_attack_worsen: 0.0
+max_allowed_external_asr: 0.05
+max_attack_asr:
+  badnet_oda: 0.05
+  semantic_green_cleanlabel: 0.0
+  blend_oga: 0.0
+  wanet_oga: 0.0

@@ -21,13 +21,15 @@ def parse_args():
     p.add_argument("--critical-classes", nargs="+", required=True)
     p.add_argument("--out", default=None, help="JSON for single image; CSV for batch mode")
     p.add_argument("--device", default=None)
+    p.add_argument("--imgsz", type=int, default=640)
+    p.add_argument("--conf", type=float, default=0.25)
     p.add_argument("--max-images", type=int, default=None)
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    adapter = UltralyticsYOLOAdapter(args.model, device=args.device)
+    adapter = UltralyticsYOLOAdapter(args.model, device=args.device, default_conf=args.conf, default_imgsz=args.imgsz)
     target_ids = resolve_class_ids(adapter.names, args.critical_classes)
     if args.image:
         result = guard_image(adapter, args.image, target_ids)

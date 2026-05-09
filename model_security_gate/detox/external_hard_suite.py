@@ -61,6 +61,13 @@ class ExternalHardSuiteConfig:
     seed: int = 42
     semantic_abstain_rules: str | None = None
     apply_semantic_abstain: bool = False
+    apply_overlap_class_guard: bool = False
+    overlap_guard_suppressor_class_ids: Sequence[int] = field(default_factory=tuple)
+    overlap_guard_suppressor_class_names: Sequence[str] = field(default_factory=tuple)
+    overlap_guard_iou: float = 0.10
+    overlap_guard_conf_margin: float = 0.30
+    overlap_guard_min_suppressor_conf: float = 0.25
+    overlap_guard_max_target_conf: float = 1.01
 
 
 def infer_attack_goal(name: str, default: str = "semantic") -> str:
@@ -193,6 +200,121 @@ def apply_semantic_abstain_guard_to_detections(
     return kept, payload
 
 
+def _det_class_matches(det: Detection, class_ids: set[int], class_names: set[str]) -> bool:
+    if int(det.cls_id) in class_ids:
+        return True
+    if class_names and str(det.cls_name or "").lower() in class_names:
+        return True
+    return False
+
+
+def apply_overlap_class_guard_to_detections(
+    dets: Sequence[Detection],
+    target_ids: Sequence[int],
+    *,
+    suppressor_class_ids: Sequence[int] = (),
+    suppressor_class_names: Sequence[str] = (),
+    iou_threshold: float = 0.10,
+    conf_margin: float = 0.30,
+    min_suppressor_conf: float = 0.25,
+    max_target_conf: float = 1.01,
+) -> tuple[List[Detection], Dict[str, Any]]:
+    """Suppress target detections overlapping a mutually-exclusive class.
+
+    This post-NMS guard is designed for pairs such as ``helmet`` vs ``head``:
+    residual backdoor false positives often appear as a target box on top of a
+    confident non-target head box.  A target detection is removed only when an
+    overlapping suppressor class is close enough in confidence:
+
+    ``suppressor_conf + conf_margin >= target_conf``.
+
+    That keeps high-confidence target detections unless the non-target evidence
+    is also strong, which is important for preserving ODA recall.
+    """
+
+    target_set = {int(x) for x in target_ids}
+    suppressor_ids = {int(x) for x in suppressor_class_ids}
+    suppressor_names = {str(x).lower() for x in suppressor_class_names if str(x).strip()}
+    if not target_set or (not suppressor_ids and not suppressor_names):
+        return list(dets), {"action": "pass", "matched_rules": [], "max_matched_conf": None, "removed_detections": 0}
+
+    suppressors = [
+        det
+        for det in dets
+        if _det_class_matches(det, suppressor_ids, suppressor_names)
+        and float(det.conf) >= float(min_suppressor_conf)
+    ]
+    if not suppressors:
+        return list(dets), {"action": "pass", "matched_rules": [], "max_matched_conf": None, "removed_detections": 0}
+
+    kept: List[Detection] = []
+    matched_rules: List[Dict[str, Any]] = []
+    max_conf: float | None = None
+    removed = 0
+    for det in dets:
+        if int(det.cls_id) not in target_set or float(det.conf) > float(max_target_conf):
+            kept.append(det)
+            continue
+        matched_suppressor: Detection | None = None
+        matched_iou = 0.0
+        for suppressor in suppressors:
+            overlap = iou_xyxy(det.xyxy, suppressor.xyxy)
+            if overlap >= float(iou_threshold) and float(suppressor.conf) + float(conf_margin) >= float(det.conf):
+                matched_suppressor = suppressor
+                matched_iou = float(overlap)
+                break
+        if matched_suppressor is None:
+            kept.append(det)
+            continue
+        removed += 1
+        max_conf = float(det.conf) if max_conf is None else max(max_conf, float(det.conf))
+        matched_rules.append(
+            {
+                "rule_id": "overlap_class_guard",
+                "reason": "target detection suppressed by overlapping mutually-exclusive class",
+                "class_id": int(det.cls_id),
+                "class_name": str(det.cls_name or ""),
+                "conf": float(det.conf),
+                "bbox": list(det.xyxy),
+                "suppressor_class_id": int(matched_suppressor.cls_id),
+                "suppressor_class_name": str(matched_suppressor.cls_name or ""),
+                "suppressor_conf": float(matched_suppressor.conf),
+                "suppressor_bbox": list(matched_suppressor.xyxy),
+                "iou": matched_iou,
+            }
+        )
+    return kept, {
+        "action": "review" if removed else "pass",
+        "matched_rules": matched_rules,
+        "max_matched_conf": max_conf,
+        "removed_detections": int(removed),
+    }
+
+
+def _merge_guard_info(*infos: Mapping[str, Any]) -> Dict[str, Any]:
+    matched: List[Dict[str, Any]] = []
+    removed = 0
+    max_conf: float | None = None
+    action = "pass"
+    for info in infos:
+        if not info:
+            continue
+        if info.get("action") == "review":
+            action = "review"
+        removed += int(info.get("removed_detections") or 0)
+        for rule in info.get("matched_rules") or []:
+            if isinstance(rule, Mapping):
+                matched.append(dict(rule))
+        raw_conf = info.get("max_matched_conf")
+        if raw_conf is not None:
+            try:
+                conf = float(raw_conf)
+                max_conf = conf if max_conf is None else max(max_conf, conf)
+            except (TypeError, ValueError):
+                pass
+    return {"action": action, "matched_rules": matched, "max_matched_conf": max_conf, "removed_detections": removed}
+
+
 def _det_matches_label(det: Detection, lab: Mapping[str, Any], match_iou: float) -> bool:
     return int(det.cls_id) == int(lab["cls_id"]) and iou_xyxy(det.xyxy, lab["xyxy"]) >= float(match_iou)
 
@@ -320,8 +442,21 @@ def run_external_hard_suite(
             labels = read_yolo_labels(path, img.shape, labels_dir=ds.labels_dir)
             dets = adapter.predict_image(path, conf=cfg.conf, iou=cfg.iou, imgsz=cfg.imgsz)
             guard_info: Dict[str, Any] = {"action": "pass", "matched_rules": [], "max_matched_conf": None, "removed_detections": 0}
+            if cfg.apply_overlap_class_guard:
+                dets, overlap_info = apply_overlap_class_guard_to_detections(
+                    dets,
+                    target_ids,
+                    suppressor_class_ids=cfg.overlap_guard_suppressor_class_ids,
+                    suppressor_class_names=cfg.overlap_guard_suppressor_class_names,
+                    iou_threshold=cfg.overlap_guard_iou,
+                    conf_margin=cfg.overlap_guard_conf_margin,
+                    min_suppressor_conf=cfg.overlap_guard_min_suppressor_conf,
+                    max_target_conf=cfg.overlap_guard_max_target_conf,
+                )
+                guard_info = _merge_guard_info(guard_info, overlap_info)
             if semantic_rules and goal == "semantic" and not _has_target(labels, target_ids):
-                dets, guard_info = apply_semantic_abstain_guard_to_detections(dets, semantic_rules, image_path=path)
+                dets, semantic_info = apply_semantic_abstain_guard_to_detections(dets, semantic_rules, image_path=path)
+                guard_info = _merge_guard_info(guard_info, semantic_info)
             score = _score_external_result(goal, dets, labels, target_ids, cfg.match_iou, cfg.oda_success_mode)
             if score is None:
                 continue

@@ -92,8 +92,8 @@ def _score_to_positive_bce(score: torch.Tensor) -> torch.Tensor:
         return score.sum() * 0.0
     detached = score.detach()
     if float(detached.min()) >= -1e-5 and float(detached.max()) <= 1.0 + 1e-5:
-        prob = score.clamp(1e-5, 1.0 - 1e-5)
-        return F.binary_cross_entropy(prob, torch.ones_like(prob), reduction="mean")
+        prob = score.float().clamp(1e-5, 1.0 - 1e-5)
+        return (-torch.log(prob)).mean()
     return F.binary_cross_entropy_with_logits(score, torch.ones_like(score), reduction="mean")
 
 
@@ -102,8 +102,8 @@ def _score_to_negative_bce(score: torch.Tensor) -> torch.Tensor:
         return score.sum() * 0.0
     detached = score.detach()
     if float(detached.min()) >= -1e-5 and float(detached.max()) <= 1.0 + 1e-5:
-        prob = score.clamp(1e-5, 1.0 - 1e-5)
-        return F.binary_cross_entropy(prob, torch.zeros_like(prob), reduction="mean")
+        prob = score.float().clamp(1e-5, 1.0 - 1e-5)
+        return (-torch.log1p(-prob)).mean()
     return F.binary_cross_entropy_with_logits(score, torch.zeros_like(score), reduction="mean")
 
 

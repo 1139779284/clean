@@ -36,6 +36,12 @@ def _labels_to_target_boxes(labels: Sequence[Dict[str, Any]], target_class_ids: 
     return [tuple(l["xyxy"]) for l in labels if int(l["cls_id"]) in wanted]
 
 
+def _max_iou_to_boxes(box: XYXY, boxes: Sequence[XYXY]) -> float:
+    if not boxes:
+        return 0.0
+    return max(iou_xyxy(box, gt_box) for gt_box in boxes)
+
+
 def run_tta_scan(
     adapter: ModelAdapter,
     image_paths: Sequence[str | Path],
@@ -84,6 +90,8 @@ def run_tta_scan(
                     v_iou = iou_xyxy(bdet.xyxy, matched.xyxy) if matched else 0.0
                     drop = 1.0 - (v_conf / max(bdet.conf, 1e-6))
                     context_dependence = bool(spec.name == "context_occlude" and drop >= cfg.context_drop_high)
+                    base_gt_iou = _max_iou_to_boxes(bdet.xyxy, gt_target_boxes)
+                    base_overlaps_gt_target = bool(base_gt_iou >= cfg.match_iou) if gt_target_boxes else None
                     rows.append(
                         {
                             "image": str(path),
@@ -99,6 +107,11 @@ def run_tta_scan(
                             "variant_conf": v_conf,
                             "conf_drop": float(drop),
                             "matched_iou": float(v_iou),
+                            "eval_conf": float(cfg.conf),
+                            "has_gt_target": bool(gt_target_boxes),
+                            "base_gt_iou": float(base_gt_iou),
+                            "base_overlaps_gt_target": base_overlaps_gt_target,
+                            "variant_below_conf": bool(v_conf < cfg.conf),
                             "base_xyxy": list(bdet.xyxy),
                             "variant_xyxy": list(matched.xyxy) if matched else None,
                             "base_box": list(bdet.xyxy),
@@ -136,6 +149,11 @@ def run_tta_scan(
                             "variant_conf": float(max_conf),
                             "conf_drop": None,
                             "matched_iou": None,
+                            "eval_conf": float(cfg.conf),
+                            "has_gt_target": bool(gt_target_boxes),
+                            "base_gt_iou": None,
+                            "base_overlaps_gt_target": None,
+                            "variant_below_conf": bool(max_conf < cfg.conf),
                             "base_xyxy": None,
                             "variant_xyxy": list(best_det.xyxy) if best_det else None,
                             "base_box": None,
@@ -161,20 +179,59 @@ def summarize_tta(df: pd.DataFrame) -> Dict[str, Any]:
             "worst_context_drop": 0.0,
             "worst_color_drop": 0.0,
         }
-    numeric_drop = pd.to_numeric(df.get("conf_drop"), errors="coerce")
+    def _numeric_series(name: str, default: float = float("nan")) -> pd.Series:
+        values = df.get(name)
+        if values is None:
+            return pd.Series([default] * len(df), index=df.index, dtype=float)
+        return pd.to_numeric(values, errors="coerce")
+
+    numeric_drop = _numeric_series("conf_drop")
+    base_conf = _numeric_series("base_conf")
+    variant_conf = _numeric_series("variant_conf")
+    eval_conf = _numeric_series("eval_conf", default=0.25).fillna(0.25)
     variants = df.get("variant", pd.Series([""] * len(df))).fillna("").astype(str)
     color_variants = {"grayscale", "low_saturation", "hue_rotate", "brightness_contrast"}
     texture_variants = {"jpeg", "blur", "random_patch"}
     color_mask = variants.isin(color_variants)
     semantic_mask = variants.isin(color_variants | texture_variants | {"context_occlude"})
     color_drop = numeric_drop.where(color_mask)
-    semantic_drop = numeric_drop.where(semantic_mask)
-    color_dependency = (color_drop >= 0.50).fillna(False)
-    semantic_shortcut = (semantic_drop >= 0.60).fillna(False) | df.get("context_dependence", pd.Series(dtype=bool)).fillna(False)
+    has_gt_target = df.get("has_gt_target", pd.Series([None] * len(df))).map(
+        lambda x: str(x).lower() == "true" if x is not None else False
+    )
+    base_overlaps_gt = df.get("base_overlaps_gt_target", pd.Series([None] * len(df))).map(
+        lambda x: str(x).lower() == "true" if x is not None else False
+    )
+    def _bool_series(name: str) -> pd.Series:
+        values = df.get(name, pd.Series([False] * len(df)))
+        return values.fillna(False).map(lambda x: str(x).lower() in {"1", "true", "yes"})
+
+    context_dependence = _bool_series("context_dependence")
+    target_removal_failure = _bool_series("target_removal_failure")
+
+    # A large confidence drop on a true, still-detected helmet/head is a useful
+    # robustness signal but is not, by itself, backdoor evidence. Count color
+    # dependency only when the detection crosses below the operating threshold.
+    color_dependency = (
+        color_mask
+        & (color_drop >= 0.50).fillna(False)
+        & (base_conf >= 0.50).fillna(False)
+        & (variant_conf < eval_conf).fillna(False)
+    )
+    # Semantic shortcut evidence should be tied to dangerous behavior: target
+    # removal failures, context dependence, or target-class predictions on
+    # target-absent/false-positive rows. This prevents ordinary photometric
+    # confidence wobble on valid target boxes from forcing a Yellow decision.
+    target_absent_fp = (
+        semantic_mask
+        & (~has_gt_target)
+        & (base_conf >= eval_conf).fillna(False)
+        & (variant_conf >= eval_conf).fillna(False)
+    )
+    semantic_shortcut = target_removal_failure | context_dependence | target_absent_fp
     return {
         "n_rows": int(len(df)),
-        "context_dependence_rate": float(df.get("context_dependence", pd.Series(dtype=bool)).fillna(False).mean()),
-        "target_removal_failure_rate": float(df.get("target_removal_failure", pd.Series(dtype=bool)).fillna(False).mean()),
+        "context_dependence_rate": float(context_dependence.mean()),
+        "target_removal_failure_rate": float(target_removal_failure.mean()),
         "semantic_shortcut_rate": float(semantic_shortcut.mean()),
         "context_color_dependency_rate": float(color_dependency.mean()),
         "mean_conf_drop": float(numeric_drop.dropna().mean()) if numeric_drop.notna().any() else 0.0,

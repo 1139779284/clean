@@ -10,12 +10,14 @@ import torch
 from torch.utils.data import Dataset
 
 from model_security_gate.utils.io import list_images, read_image_bgr, read_yolo_labels
+from model_security_gate.utils.torchvision_compat import patch_torchvision_nms_fallback
 from model_security_gate.utils.geometry import XYXY
 
 
 def get_ultralytics_yolo(model_or_path: Any):
     """Return an Ultralytics YOLO wrapper from a path, adapter, or YOLO object."""
     if isinstance(model_or_path, (str, Path)):
+        patch_torchvision_nms_fallback()
         from ultralytics import YOLO
 
         return YOLO(str(model_or_path))

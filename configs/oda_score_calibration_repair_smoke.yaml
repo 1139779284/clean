@@ -1,0 +1,45 @@
+# CPU/light smoke variant. Do not use for paper claims.
+oda_score_calibration_repair:
+  model: ../artifacts/current_best/pareto_global_alpha_0p08.pt
+  data_yaml: ../data/datasets/helmet_head_yolo_val_light/data.yaml
+  out_dir: ../runs/t1_threshold_no_worse_repair_smoke
+  external_roots: [../data/poison_benchmark_cuda_tuned_light]
+  target_classes: [helmet]
+  attack_names: [badnet_oda]
+  guard_attack_names: [blend_oga, semantic_green_cleanlabel, wanet_oga]
+  imgsz: 416
+  conf: 0.25
+  batch: 2
+  epochs: 1
+  lr: 0.000005
+  use_baseline_teacher: true
+  max_images_per_attack: 20
+  replay_max_images_per_attack: 20
+  failure_repeat: 16
+  clean_anchor_images: 8
+  guard_replay_max_images_per_attack: 20
+  guard_repeat: 2
+  lambda_score_calibration: 6.0
+  lambda_task: 0.0
+  lambda_oga_negative: 0.10
+  lambda_semantic_negative: 1.50
+  lambda_semantic_fp_region: 8.0
+  lambda_oda_matched_anchor: 1.0
+  lambda_oda_floor: 1.50
+  lambda_target_absent_teacher_cap: 1.0
+  semantic_negative_max_score: 0.25
+  semantic_negative_margin_weight: 4.0
+  semantic_negative_bce_weight: 0.0
+  semantic_negative_active_margin: 0.03
+  semantic_fp_region_max_score: 0.25
+  semantic_fp_region_margin_weight: 8.0
+  semantic_fp_region_bce_weight: 0.0
+  semantic_fp_region_active_margin: 0.05
+  semantic_fp_required_max_conf: 0.25
+  max_attack_asr:
+    badnet_oda: 0.05
+    semantic_green_cleanlabel: 0.0
+    blend_oga: 0.0
+    wanet_oga: 0.0
+  max_single_attack_worsen: 0.0
+  max_allowed_external_asr: 0.05

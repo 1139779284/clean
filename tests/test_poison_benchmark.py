@@ -22,6 +22,31 @@ def test_patch_trigger_adds_visible_corner_trigger():
     assert all(0.0 < float(v) <= 1.0 for v in box)
 
 
+def test_load_source_items_can_remap_source_class_ids(tmp_path):
+    images = tmp_path / "images"
+    labels = tmp_path / "labels"
+    images.mkdir()
+    labels.mkdir()
+    img = np.full((80, 80, 3), 127, dtype=np.uint8)
+    cv2.imwrite(str(images / "sample.jpg"), img)
+    (labels / "sample.txt").write_text(
+        "1 0.5 0.5 0.2 0.2\n0 0.25 0.25 0.1 0.1\n",
+        encoding="utf-8",
+    )
+
+    items = benchmark.load_source_items(
+        images,
+        labels,
+        source_target_class_id=1,
+        source_other_class_id=0,
+        target_class_id=0,
+    )
+
+    assert items[0].classes == {0, 1}
+    assert items[0].label_lines[0].startswith("0 ")
+    assert items[0].label_lines[1].startswith("1 ")
+
+
 def test_create_poison_dataset_writes_manifest_and_fake_label(tmp_path):
     images = tmp_path / "images"
     labels = tmp_path / "labels"

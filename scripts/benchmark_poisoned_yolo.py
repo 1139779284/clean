@@ -67,6 +67,24 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--target-class-id", type=int, default=0, help="YOLO class id treated as target class, default helmet=0")
     p.add_argument("--target-class-name", default="helmet")
     p.add_argument("--other-class-name", default="head")
+    p.add_argument(
+        "--source-target-class-id",
+        type=int,
+        default=None,
+        help=(
+            "Class id for the target class in the source labels. "
+            "If omitted, defaults to --target-class-id. Example: source helmet=1, output helmet=0."
+        ),
+    )
+    p.add_argument(
+        "--source-other-class-id",
+        type=int,
+        default=None,
+        help=(
+            "Class id for the non-target class in the source labels. "
+            "If omitted, infers the other id from --target-class-id for two-class data."
+        ),
+    )
     p.add_argument("--seed", type=int, default=20260505)
     p.add_argument("--clean-train", type=int, default=260)
     p.add_argument("--clean-val", type=int, default=100)
@@ -103,15 +121,54 @@ def read_image(path: Path) -> np.ndarray:
     return img
 
 
-def load_source_items(images_dir: str | Path, labels_dir: str | Path) -> List[SourceItem]:
+def remap_source_label_lines(
+    lines: Sequence[str],
+    *,
+    source_target_class_id: int,
+    source_other_class_id: int,
+    target_class_id: int,
+) -> List[str]:
+    other_class_id = 1 - int(target_class_id)
+    out: List[str] = []
+    for line in lines:
+        parts = line.split()
+        if not parts:
+            continue
+        source_cls = int(float(parts[0]))
+        if source_cls == int(source_target_class_id):
+            parts[0] = str(int(target_class_id))
+        elif source_cls == int(source_other_class_id):
+            parts[0] = str(int(other_class_id))
+        out.append(" ".join(parts))
+    return out
+
+
+def load_source_items(
+    images_dir: str | Path,
+    labels_dir: str | Path,
+    *,
+    source_target_class_id: int | None = None,
+    source_other_class_id: int | None = None,
+    target_class_id: int = 0,
+) -> List[SourceItem]:
     images_dir = Path(images_dir)
     labels_dir = Path(labels_dir)
+    if source_target_class_id is None:
+        source_target_class_id = int(target_class_id)
+    if source_other_class_id is None:
+        source_other_class_id = 1 - int(source_target_class_id)
     items: List[SourceItem] = []
     for image_path in sorted(x for x in images_dir.rglob("*") if x.suffix.lower() in IMAGE_EXTS):
         label_path = labels_dir / f"{image_path.stem}.txt"
         if not label_path.exists():
             continue
         lines = [line.strip() for line in label_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        lines = remap_source_label_lines(
+            lines,
+            source_target_class_id=int(source_target_class_id),
+            source_other_class_id=int(source_other_class_id),
+            target_class_id=int(target_class_id),
+        )
         classes = {int(float(line.split()[0])) for line in lines if line.split()}
         items.append(SourceItem(image_path.stem, image_path, label_path, lines, classes))
     return items
@@ -565,7 +622,13 @@ def main() -> None:
 
             clean_filter_model_path = str(Path(args.filter_clean_model or args.base_model))
             clean_filter_model = YOLO(clean_filter_model_path)
-        items = load_source_items(args.source_images, args.source_labels)
+        items = load_source_items(
+            args.source_images,
+            args.source_labels,
+            source_target_class_id=args.source_target_class_id,
+            source_other_class_id=args.source_other_class_id,
+            target_class_id=args.target_class_id,
+        )
         if not items:
             raise SystemExit("No source images with labels found")
         for spec in specs.values():

@@ -1,0 +1,27 @@
+external_hard_suite:
+  model: D:\clean_yolo\model_security_gate\runs\hybrid_purify_corrected_suite_smoke_2026-05-09\02_cycle_01_phase_02_oga_hardening\ultralytics_phase_finetune\phase_finetune\weights\best.pt
+  data_yaml: D:\clean_yolo\datasets\helmet_head_yolo_train_remap\data.yaml
+  target_classes:
+    - helmet
+  roots:
+    - D:\clean_yolo\poison_benchmark_cuda_tuned_remap_v2
+  out: D:\clean_yolo\model_security_gate\runs\external_phase2_overlap_guard_valid_remap_v2_full300_conf025_2026-05-09
+  imgsz: 416
+  conf: 0.25
+  iou: 0.7
+  match_iou: 0.30
+  oda_success_mode: localized_any_recalled
+  max_images_per_attack: 300
+  device: 0
+
+  # Last-mile algorithm guard for mutually-exclusive PPE classes.
+  # In this project mapping, class 0=helmet and class 1=head.
+  # The guard removes a helmet detection when a sufficiently confident head
+  # detection overlaps it and is not lower by more than the configured margin.
+  apply_overlap_class_guard: true
+  overlap_guard_suppressor_class_ids:
+    - 1
+  overlap_guard_iou: 0.10
+  overlap_guard_conf_margin: 0.30
+  overlap_guard_min_suppressor_conf: 0.25
+  overlap_guard_max_target_conf: 1.01

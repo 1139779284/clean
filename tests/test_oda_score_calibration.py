@@ -132,3 +132,81 @@ def test_semantic_fp_region_guard_skips_unmatched_images() -> None:
     loss = semantic_fp_region_guard_loss(pred, batch, [0], regions, max_target_score=0.03)
 
     assert loss.item() == 0.0
+
+from model_security_gate.detox.oda_score_calibration import (
+    localized_target_score_floor_loss,
+    target_absent_teacher_cap_loss,
+)
+
+
+def test_semantic_negative_threshold_aware_is_inactive_below_active_band() -> None:
+    pred = _prediction(0.05, far_target_score=0.20)
+    batch = {
+        "img": torch.zeros((1, 3, 100, 100), dtype=torch.float32),
+        "cls": torch.zeros((0, 1), dtype=torch.float32),
+        "bboxes": torch.zeros((0, 4), dtype=torch.float32),
+        "batch_idx": torch.zeros((0,), dtype=torch.float32),
+        "im_file": ["external_semantic_green_cleanlabel_negative.jpg"],
+    }
+    loss = semantic_negative_guard_loss(
+        pred,
+        batch,
+        [0],
+        semantic_keywords=("semantic",),
+        max_target_score=0.25,
+        active_margin=0.03,
+        negative_bce_weight=0.0,
+        margin_weight=4.0,
+    )
+    assert loss.item() == 0.0
+
+
+def test_semantic_fp_region_threshold_aware_penalizes_above_cap() -> None:
+    pred = _prediction(0.05, far_target_score=0.80)
+    batch = {
+        "img": torch.zeros((1, 3, 100, 100), dtype=torch.float32),
+        "cls": torch.zeros((0, 1), dtype=torch.float32),
+        "bboxes": torch.zeros((0, 4), dtype=torch.float32),
+        "batch_idx": torch.zeros((0,), dtype=torch.float32),
+        "im_file": ["external_semantic_green_cleanlabel_attack_0011_helm_021400_r00.jpg"],
+    }
+    regions = {"attack_0011_helm_021400": [[72.0, 72.0, 88.0, 88.0]]}
+    loss = semantic_fp_region_guard_loss(
+        pred,
+        batch,
+        [0],
+        regions,
+        max_target_score=0.25,
+        active_margin=0.05,
+        negative_bce_weight=0.0,
+        margin_weight=8.0,
+    )
+    assert loss.item() > 0.0
+
+
+def test_localized_target_score_floor_loss_anchors_against_teacher() -> None:
+    batch = _batch_with_one_target()
+    student_low = _prediction(0.10)
+    teacher_high = _prediction(0.60)
+    loss = localized_target_score_floor_loss(
+        student_low,
+        batch,
+        [0],
+        teacher_prediction=teacher_high,
+        min_score=0.25,
+        teacher_margin=0.02,
+    )
+    assert loss.item() > 0.0
+
+
+def test_target_absent_teacher_cap_loss_penalizes_new_target_drift() -> None:
+    pred = _prediction(0.05, far_target_score=0.80)
+    teacher = _prediction(0.05, far_target_score=0.02)
+    batch = {
+        "img": torch.zeros((1, 3, 100, 100), dtype=torch.float32),
+        "cls": torch.zeros((0, 1), dtype=torch.float32),
+        "bboxes": torch.zeros((0, 4), dtype=torch.float32),
+        "batch_idx": torch.zeros((0,), dtype=torch.float32),
+    }
+    loss = target_absent_teacher_cap_loss(pred, batch, [0], teacher_prediction=teacher, max_target_score=0.25)
+    assert loss.item() > 0.0

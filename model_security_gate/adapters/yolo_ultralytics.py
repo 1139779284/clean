@@ -5,6 +5,8 @@ from typing import Dict, List, Optional, Sequence, Union
 
 import numpy as np
 
+from model_security_gate.utils.torchvision_compat import patch_torchvision_nms_fallback
+
 from .base import Detection
 
 
@@ -23,6 +25,7 @@ class UltralyticsYOLOAdapter:
         default_iou: float = 0.7,
         default_imgsz: int = 640,
     ) -> None:
+        patch_torchvision_nms_fallback()
         from ultralytics import YOLO
 
         self.weights = str(weights)

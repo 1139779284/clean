@@ -18,7 +18,7 @@ from model_security_gate.detox.external_hard_suite import (
 )
 from model_security_gate.detox.losses import raw_prediction, supervised_yolo_loss
 from model_security_gate.detox.oda_candidate_diagnostics import ODACandidateDiagnosticConfig, diagnose_oda_candidates
-from model_security_gate.detox.oda_loss_v2 import negative_target_candidate_suppression_loss
+from model_security_gate.detox.oda_loss_v2 import matched_candidate_oda_loss, negative_target_candidate_suppression_loss
 from model_security_gate.detox.oda_postnms_repair import (
     _blocked_by_worsening,
     _build_failure_dataset,
@@ -28,9 +28,11 @@ from model_security_gate.detox.oda_postnms_repair import (
     _target_ids_from_names,
 )
 from model_security_gate.detox.oda_score_calibration import (
+    localized_target_score_floor_loss,
     oda_score_calibration_loss,
     semantic_fp_region_guard_loss,
     semantic_negative_guard_loss,
+    target_absent_teacher_cap_loss,
 )
 from model_security_gate.detox.strong_train import _torch_model, load_ultralytics_yolo, save_ultralytics_yolo
 from model_security_gate.detox.yolo_dataset import make_yolo_dataloader, move_batch_to_device
@@ -55,6 +57,7 @@ class ODAScoreCalibrationRepairConfig:
     attack_names: Sequence[str] = field(default_factory=tuple)
     failure_rows_csv: str | None = None
     teacher_model: str | None = None
+    use_baseline_teacher: bool = True
     device: str | None = None
 
     imgsz: int = 416
@@ -84,6 +87,9 @@ class ODAScoreCalibrationRepairConfig:
     lambda_oga_negative: float = 0.0
     lambda_semantic_negative: float = 0.0
     lambda_semantic_fp_region: float = 0.0
+    lambda_oda_matched_anchor: float = 0.0
+    lambda_oda_floor: float = 0.0
+    lambda_target_absent_teacher_cap: float = 0.0
 
     score_iou_threshold: float = 0.03
     score_center_radius: float = 2.0
@@ -100,11 +106,23 @@ class ODAScoreCalibrationRepairConfig:
     semantic_negative_topk: int = 256
     semantic_negative_max_score: float = 0.05
     semantic_negative_margin_weight: float = 0.50
+    semantic_negative_bce_weight: float = 1.0
+    semantic_negative_active_margin: float | None = None
     semantic_fp_region_topk: int = 64
     semantic_fp_region_iou_threshold: float = 0.03
     semantic_fp_region_center_radius: float = 2.0
     semantic_fp_region_max_score: float = 0.03
     semantic_fp_region_margin_weight: float = 1.0
+    semantic_fp_region_bce_weight: float = 1.0
+    semantic_fp_region_active_margin: float | None = None
+
+    target_absent_teacher_cap_topk: int = 256
+    target_absent_teacher_cap_max_score: float = 0.25
+    target_absent_teacher_cap_margin: float = 0.02
+    oda_floor_min_score: float = 0.25
+    oda_floor_teacher_margin: float = 0.02
+    oda_matched_min_score: float = 0.45
+    oda_matched_topk: int = 32
 
     max_attack_asr: Mapping[str, float] = field(default_factory=dict)
     semantic_fp_required_max_conf: float | None = None
@@ -472,8 +490,9 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
     student.train()
 
     teacher = None
-    if cfg.teacher_model:
-        teacher_yolo = load_ultralytics_yolo(cfg.teacher_model, device)
+    teacher_path = cfg.teacher_model or (cfg.model if bool(cfg.use_baseline_teacher) else None)
+    if teacher_path:
+        teacher_yolo = load_ultralytics_yolo(teacher_path, device)
         teacher = _torch_model(teacher_yolo).to(device).eval()
         for param in teacher.parameters():
             param.requires_grad_(False)
@@ -501,6 +520,9 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
         "loss_oga",
         "loss_semantic",
         "loss_semantic_fp_region",
+        "loss_oda_matched_anchor",
+        "loss_oda_floor",
+        "loss_target_absent_teacher_cap",
     ]
     with log_path.open("w", newline="", encoding="utf-8") as f:
         csv.DictWriter(f, fieldnames=fields).writeheader()
@@ -549,6 +571,8 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
                         topk=int(cfg.semantic_negative_topk),
                         max_target_score=float(cfg.semantic_negative_max_score),
                         margin_weight=float(cfg.semantic_negative_margin_weight),
+                        negative_bce_weight=float(cfg.semantic_negative_bce_weight),
+                        active_margin=cfg.semantic_negative_active_margin,
                     )
                     * float(cfg.lambda_semantic_negative)
                     if cfg.lambda_semantic_negative > 0
@@ -565,12 +589,68 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
                         iou_threshold=float(cfg.semantic_fp_region_iou_threshold),
                         center_radius=float(cfg.semantic_fp_region_center_radius),
                         margin_weight=float(cfg.semantic_fp_region_margin_weight),
+                        negative_bce_weight=float(cfg.semantic_fp_region_bce_weight),
+                        active_margin=cfg.semantic_fp_region_active_margin,
                     )
                     * float(cfg.lambda_semantic_fp_region)
                     if cfg.lambda_semantic_fp_region > 0 and semantic_fp_regions
                     else loss_score * 0.0
                 )
-                loss_total = loss_score + loss_task + loss_oga + loss_semantic + loss_semantic_fp
+                loss_oda_matched = (
+                    matched_candidate_oda_loss(
+                        pred,
+                        batch,
+                        target_ids,
+                        teacher_prediction=teacher_pred,
+                        iou_threshold=float(cfg.score_iou_threshold),
+                        center_radius=float(cfg.score_center_radius),
+                        topk=int(cfg.oda_matched_topk),
+                        min_score=float(cfg.oda_matched_min_score),
+                    )
+                    * float(cfg.lambda_oda_matched_anchor)
+                    if cfg.lambda_oda_matched_anchor > 0
+                    else loss_score * 0.0
+                )
+                loss_oda_floor = (
+                    localized_target_score_floor_loss(
+                        pred,
+                        batch,
+                        target_ids,
+                        teacher_prediction=teacher_pred,
+                        iou_threshold=float(cfg.score_iou_threshold),
+                        center_radius=float(cfg.score_center_radius),
+                        topk_near=int(cfg.score_topk_near),
+                        min_score=float(cfg.oda_floor_min_score),
+                        teacher_margin=float(cfg.oda_floor_teacher_margin),
+                    )
+                    * float(cfg.lambda_oda_floor)
+                    if cfg.lambda_oda_floor > 0 and teacher_pred is not None
+                    else loss_score * 0.0
+                )
+                loss_target_absent_teacher_cap = (
+                    target_absent_teacher_cap_loss(
+                        pred,
+                        batch,
+                        target_ids,
+                        teacher_prediction=teacher_pred,
+                        topk=int(cfg.target_absent_teacher_cap_topk),
+                        max_target_score=float(cfg.target_absent_teacher_cap_max_score),
+                        teacher_margin=float(cfg.target_absent_teacher_cap_margin),
+                    )
+                    * float(cfg.lambda_target_absent_teacher_cap)
+                    if cfg.lambda_target_absent_teacher_cap > 0 and teacher_pred is not None
+                    else loss_score * 0.0
+                )
+                loss_total = (
+                    loss_score
+                    + loss_task
+                    + loss_oga
+                    + loss_semantic
+                    + loss_semantic_fp
+                    + loss_oda_matched
+                    + loss_oda_floor
+                    + loss_target_absent_teacher_cap
+                )
             scaler.scale(loss_total).backward()
             if cfg.grad_clip_norm and cfg.grad_clip_norm > 0:
                 scaler.unscale_(optimizer)
@@ -588,6 +668,9 @@ def run_oda_score_calibration_repair(cfg: ODAScoreCalibrationRepairConfig) -> di
                         "loss_oga": float(loss_oga.detach().cpu().item()),
                         "loss_semantic": float(loss_semantic.detach().cpu().item()),
                         "loss_semantic_fp_region": float(loss_semantic_fp.detach().cpu().item()),
+                        "loss_oda_matched_anchor": float(loss_oda_matched.detach().cpu().item()),
+                        "loss_oda_floor": float(loss_oda_floor.detach().cpu().item()),
+                        "loss_target_absent_teacher_cap": float(loss_target_absent_teacher_cap.detach().cpu().item()),
                     }
                 )
 

@@ -6,6 +6,7 @@ import numpy as np
 from model_security_gate.adapters.base import Detection
 from model_security_gate.detox.external_hard_suite import (
     ExternalHardSuiteConfig,
+    apply_overlap_class_guard_to_detections,
     append_external_replay_samples,
     discover_external_attack_datasets,
     run_external_hard_suite,
@@ -37,6 +38,19 @@ class MatchDetectAdapter:
 
     def predict_image(self, image, conf=None, iou=None, imgsz=None):
         return [Detection((20, 20, 45, 45), 0.9, 0, "helmet")]
+
+    def predict_batch(self, images, conf=None, iou=None, imgsz=None):
+        return [self.predict_image(x, conf=conf, iou=iou, imgsz=imgsz) for x in images]
+
+
+class HelmetHeadOverlapAdapter:
+    names = {0: "helmet", 1: "head"}
+
+    def predict_image(self, image, conf=None, iou=None, imgsz=None):
+        return [
+            Detection((10, 10, 30, 30), 0.62, 0, "helmet"),
+            Detection((11, 11, 31, 31), 0.40, 1, "head"),
+        ]
 
     def predict_batch(self, images, conf=None, iou=None, imgsz=None):
         return [self.predict_image(x, conf=conf, iou=iou, imgsz=imgsz) for x in images]
@@ -134,6 +148,54 @@ def test_oda_class_presence_mode_counts_any_target_detection_as_not_success(tmp_
     assert row["success"] is False
     assert row["success_reason"] == "target_class_still_detected"
     assert row["n_target_dets"] == 1
+
+
+def test_overlap_class_guard_removes_target_overlapping_head():
+    dets = [
+        Detection((10, 10, 30, 30), 0.62, 0, "helmet"),
+        Detection((11, 11, 31, 31), 0.40, 1, "head"),
+    ]
+
+    kept, info = apply_overlap_class_guard_to_detections(
+        dets,
+        [0],
+        suppressor_class_ids=[1],
+        iou_threshold=0.10,
+        conf_margin=0.30,
+        min_suppressor_conf=0.25,
+    )
+
+    assert [d.cls_id for d in kept] == [1]
+    assert info["action"] == "review"
+    assert info["removed_detections"] == 1
+    assert info["matched_rules"][0]["rule_id"] == "overlap_class_guard"
+
+
+def test_external_suite_overlap_class_guard_reduces_oga_false_positive(tmp_path: Path):
+    root = tmp_path / "bench"
+    img = root / "data" / "badnet_oga" / "images" / "val" / "neg.jpg"
+    lab = root / "data" / "badnet_oga" / "labels" / "val" / "neg.txt"
+    _write_img(img)
+    lab.parent.mkdir(parents=True, exist_ok=True)
+    lab.write_text("", encoding="utf-8")
+    datasets = discover_external_attack_datasets([root])
+
+    plain = run_external_hard_suite(HelmetHeadOverlapAdapter(), [0], ExternalHardSuiteConfig(attacks=datasets))
+    guarded = run_external_hard_suite(
+        HelmetHeadOverlapAdapter(),
+        [0],
+        ExternalHardSuiteConfig(
+            attacks=datasets,
+            apply_overlap_class_guard=True,
+            overlap_guard_suppressor_class_ids=[1],
+            overlap_guard_iou=0.10,
+            overlap_guard_conf_margin=0.30,
+        ),
+    )
+
+    assert plain["summary"]["max_asr"] == 1.0
+    assert guarded["summary"]["max_asr"] == 0.0
+    assert guarded["rows"][0]["runtime_guard_removed_detections"] == 1
 
 
 def test_failure_only_replay_copies_only_success_rows(tmp_path: Path):

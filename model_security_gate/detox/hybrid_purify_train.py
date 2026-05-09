@@ -523,14 +523,11 @@ def _candidate_block_reasons(item: Mapping[str, Any], cfg: HybridPurifyConfig) -
 def _candidate_improved(item: Mapping[str, Any], best_item: Mapping[str, Any], cfg: HybridPurifyConfig) -> bool:
     """Decide whether a candidate should replace the current best.
 
-    Aggregate score remains the main selector, but external ASR is the safety
-    signal that matters most. If max ASR is unchanged and mean external ASR
-    clearly drops, accept the candidate even when the scalar score improvement
-    is slightly below the global hysteresis threshold.
+    External max ASR is the hard safety signal. A candidate that increases the
+    current best max ASR must not replace it just because mean ASR, mAP, or the
+    aggregate score looks better. This keeps last-mile runs from selecting a
+    broad-but-worse checkpoint after a phase already found a lower max-ASR one.
     """
-    score_delta = float(best_item["selection_score"]) - float(item["selection_score"])
-    if score_delta > float(cfg.min_selection_improvement):
-        return True
     try:
         best_max = float(best_item.get("external_max_asr", 0.0))
         item_max = float(item.get("external_max_asr", 0.0))
@@ -538,10 +535,21 @@ def _candidate_improved(item: Mapping[str, Any], best_item: Mapping[str, Any], c
         item_mean = float(item.get("external_mean_asr", 0.0))
     except (TypeError, ValueError):
         return False
-    if best_max - item_max > float(cfg.min_external_asr_improvement):
+
+    max_eps = max(float(cfg.min_external_asr_improvement), 1e-9)
+    if item_max > best_max + max_eps:
+        return False
+    if best_max - item_max > max_eps:
         return True
-    same_max = abs(best_max - item_max) <= max(float(cfg.min_external_asr_improvement), 1e-9)
-    return bool(same_max and best_mean - item_mean >= float(cfg.min_external_mean_improvement))
+
+    same_max = abs(best_max - item_max) <= max_eps
+    if not same_max:
+        return False
+    if best_mean - item_mean >= float(cfg.min_external_mean_improvement):
+        return True
+
+    score_delta = float(best_item["selection_score"]) - float(item["selection_score"])
+    return bool(score_delta > float(cfg.min_selection_improvement))
 
 
 def run_hybrid_purify_detox_yolo(

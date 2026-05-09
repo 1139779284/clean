@@ -29,6 +29,7 @@ from model_security_gate.detox.pgbd_od import make_pgbd_attack_view, pgbd_paired
 from model_security_gate.detox.prototype import PrototypeBank, build_prototype_bank, prototype_alignment_loss, target_prototype_suppression_loss
 from model_security_gate.detox.yolo_dataset import make_yolo_dataloader, move_batch_to_device, parse_yolo_data_yaml
 from model_security_gate.utils.io import json_default, write_json
+from model_security_gate.utils.torchvision_compat import patch_torchvision_nms_fallback
 
 
 @dataclass
@@ -123,6 +124,7 @@ def _device_from_cfg(cfg: StrongDetoxConfig) -> torch.device:
 
 
 def load_ultralytics_yolo(weights: str | Path, device: torch.device):
+    patch_torchvision_nms_fallback()
     from ultralytics import YOLO
 
     yolo = YOLO(str(weights))
