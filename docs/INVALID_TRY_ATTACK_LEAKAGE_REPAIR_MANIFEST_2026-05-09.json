@@ -1,0 +1,7 @@
+{
+  "status": "invalid_for_algorithm_evaluation",
+  "reason": "try_attack_data is a held-out semantic-backdoor test set; it must not be used for detox training or hard-negative replay.",
+  "quarantined_at": "2026-05-09T15:20:33",
+  "heldout_set": "D:\\clean_yolo\\try_attack_data",
+  "note": "The quarantined model/dataset may reduce this specific folder but is data-leakage and should not be reported as purification-program success."
+}
