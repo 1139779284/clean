@@ -108,3 +108,8 @@ def compare_guarded_unguarded(*, unguarded: Mapping[str, Any] | None, guarded: M
         ga = float(g["asr_matrix"].get(attack, 0.0))
         rows.append({"attack": attack, "unguarded_asr": ua, "guarded_asr": ga, "guard_delta": ga - ua, "guard_reduction": ua - ga})
     return {"unguarded": u, "guarded": g, "attacks": rows, "guard_is_primary": False}
+
+# Compatibility alias for newer algorithm orchestration scripts.
+def summarize_asr(report: Mapping[str, Any] | None) -> dict[str, Any]:
+    s = summarize_external_report(report or {})
+    return {"attack_asr": dict(s.get("asr_matrix", {})), "max_asr": float(s.get("max_asr", 0.0)), "mean_asr": float(s.get("mean_asr", 0.0)), "n_attacks": len(s.get("asr_matrix", {})), "guarded": bool(((report or {}).get("config") or {}).get("apply_overlap_class_guard") or ((report or {}).get("config") or {}).get("apply_semantic_abstain"))}

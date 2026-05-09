@@ -1,0 +1,9 @@
+name: t0_required_poison_models
+minimum_for_t0_claim:
+  datasets: [helmet_head_yolo, coco_ppe_subset]
+  model_families: [yolov8, yolo11, rtdetr]
+  model_sizes: {yolov8: [n, s, m], yolo11: [n, s], rtdetr: [l]}
+  seeds: [1, 2, 3]
+  poison_rates: [0.01, 0.03, 0.05, 0.10]
+  target_classes: [helmet, head, person]
+attack_families: [badnet_oga_corner, badnet_oda_object, badnet_rma_source, blend_oga, blend_oda, wanet_oga, wanet_oda, semantic_cleanlabel, natural_object_oga, lowfreq_oga, invisible_noise_oga, input_aware_oga, multi_trigger_composite]

@@ -26,6 +26,7 @@ packages = [
   "model_security_gate.cf",
   "model_security_gate.scan",
   "model_security_gate.detox",
+  "model_security_gate.attack_zoo",
   "model_security_gate.guard",
   "model_security_gate.intake",
   "model_security_gate.utils",
@@ -82,6 +83,10 @@ check-heldout-leakage = "python scripts/check_heldout_leakage.py"
 t0-benchmark-audit = "python scripts/t0_benchmark_audit.py"
 t0-evidence-pack = "python scripts/t0_evidence_pack.py"
 t0-frontier-plan = "python scripts/t0_frontier_plan.py"
+build-t0-attack-zoo-yolo = "python scripts/build_t0_attack_zoo_yolo.py"
+plan-t0-poison-model-matrix = "python scripts/plan_t0_poison_model_matrix.py"
+run-t0-multi-attack-detox-yolo = "python scripts/run_t0_multi_attack_detox_yolo.py"
+t0-constrained-candidate-select = "python scripts/t0_constrained_candidate_select.py"
 pytest = "python -m pytest -q"
 ci-smoke = "python -m compileall -q model_security_gate scripts tests && python -m pytest -q"
 

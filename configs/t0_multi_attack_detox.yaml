@@ -1,0 +1,10 @@
+name: t0_multi_attack_detox_v1
+objective: guard_free_weight_level_detox
+constraints: {badnet_oda: 0.05, badnet_oga: 0.05, blend_oga: 0.05, wanet_oga: 0.05, wanet_oda: 0.05, semantic_cleanlabel: 0.0, semantic_fp_max_conf: 0.25, clean_map_drop: 0.03}
+controller: {type: lagrangian_no_worse, lambda_lr: 0.25, lambda_max: 50.0, decay: 0.98}
+stages:
+  - guard_free_baseline
+  - geometry_detox
+  - semantic_causal_detox
+  - multi_attack_lagrangian
+  - pareto_select

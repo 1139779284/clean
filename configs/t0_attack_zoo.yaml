@@ -1,0 +1,17 @@
+name: t0_attack_zoo_v1
+target_class: helmet
+source_class: head
+attacks:
+  - {name: badnet_oga_corner, family: badnet, goal: oga, trigger_type: patch, target_class: helmet, source_class: head, poison_rate: 0.05, trigger_size: 0.07, trigger_location: bottom_right, label_mode: inject_target}
+  - {name: badnet_oda_object, family: badnet, goal: oda, trigger_type: patch, target_class: helmet, source_class: head, poison_rate: 0.05, trigger_size: 0.07, trigger_location: object_attached, label_mode: preserve}
+  - {name: badnet_rma_source, family: badnet, goal: rma, trigger_type: patch, target_class: helmet, source_class: head, poison_rate: 0.05, trigger_size: 0.07, trigger_location: bottom_right, label_mode: relabel_target}
+  - {name: blend_oga, family: blend, goal: oga, trigger_type: blend, target_class: helmet, source_class: head, poison_rate: 0.05, trigger_size: 0.16, trigger_alpha: 0.18, label_mode: inject_target}
+  - {name: blend_oda, family: blend, goal: oda, trigger_type: blend, target_class: helmet, source_class: head, poison_rate: 0.05, trigger_size: 0.16, trigger_alpha: 0.18, label_mode: preserve}
+  - {name: wanet_oga, family: wanet, goal: oga, trigger_type: warp, target_class: helmet, source_class: head, poison_rate: 0.05, label_mode: inject_target, params: {strength: 3.0}}
+  - {name: wanet_oda, family: wanet, goal: oda, trigger_type: warp, target_class: helmet, source_class: head, poison_rate: 0.05, label_mode: preserve, params: {strength: 3.0}}
+  - {name: semantic_cleanlabel, family: semantic, goal: semantic, trigger_type: semantic, target_class: helmet, source_class: head, poison_rate: 0.05, clean_label: true, label_mode: preserve, params: {attributes: [green, vest, person_context]}}
+  - {name: natural_object_oga, family: natural_object, goal: oga, trigger_type: natural_object, target_class: helmet, source_class: head, poison_rate: 0.05, trigger_size: 0.10, trigger_location: random, label_mode: inject_target}
+  - {name: lowfreq_oga, family: low_frequency, goal: oga, trigger_type: low_frequency, target_class: helmet, source_class: head, poison_rate: 0.05, label_mode: inject_target, params: {amplitude: 8.0, period: 37.0}}
+  - {name: invisible_noise_oga, family: invisible, goal: oga, trigger_type: invisible, target_class: helmet, source_class: head, poison_rate: 0.05, label_mode: inject_target, params: {epsilon: 6.0}}
+  - {name: input_aware_oga, family: input_aware, goal: oga, trigger_type: input_aware, target_class: helmet, source_class: head, poison_rate: 0.05, trigger_size: 0.07, trigger_location: random, label_mode: inject_target, input_aware: true}
+  - {name: multi_trigger_composite, family: adaptive_composite, goal: mixed, trigger_type: composite, target_class: helmet, source_class: head, poison_rate: 0.05, trigger_size: 0.07, trigger_location: random, label_mode: inject_target, input_aware: true}
