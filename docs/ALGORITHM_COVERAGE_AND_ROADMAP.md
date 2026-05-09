@@ -1,6 +1,6 @@
 # Algorithm Coverage and Roadmap
 
-Last updated: 2026-05-06
+Last updated: 2026-05-10
 
 This document is the handoff map for contributors. It records which security-gate and detox algorithms are already present in this repository, which ones are approximate engineering implementations, and which items still need full implementation.
 
@@ -31,6 +31,11 @@ The immediate use case is Ultralytics YOLO helmet/head detection, including clea
 | Unknown-trigger stress suite | Implemented | `model_security_gate/scan/stress_suite.py` |
 | Occlusion attribution | Implemented with occlusion heatmaps, not Grad-CAM | `model_security_gate/scan/occlusion_attribution.py` |
 | Channel sensitivity scan | Implemented | `model_security_gate/scan/neuron_sensitivity.py` |
+| Neural Cleanse lite statistic | Implemented lightweight scorer | `model_security_gate/scan/neural_cleanse_lite.py` |
+| Activation Clustering | Implemented lightweight scorer | `model_security_gate/scan/activation_clustering.py` |
+| Spectral Signatures | Implemented lightweight scorer | `model_security_gate/scan/spectral_signatures.py` |
+| STRIP-OD | Implemented lightweight scorer | `model_security_gate/scan/strip_od.py` |
+| ABS-style channel scoring | Implemented lightweight scorer | `model_security_gate/scan/abs.py`, `scripts/t0_abs_scan.py` |
 | Risk scoring with configurable thresholds | Implemented | `model_security_gate/scan/risk.py`, `configs/risk_thresholds.yaml` |
 | Security gate CLI | Implemented | `scripts/security_gate.py` |
 | Runtime guard single/batch mode | Implemented | `model_security_gate/guard/runtime_guard.py`, `scripts/runtime_guard.py` |
@@ -55,6 +60,9 @@ The immediate use case is Ultralytics YOLO helmet/head detection, including clea
 | External hard-suite evaluation/replay | Implemented | `model_security_gate/detox/external_hard_suite.py`, `scripts/run_external_hard_suite.py` |
 | ASR closed-loop detox | Implemented | `model_security_gate/detox/asr_closed_loop_train.py`, `scripts/asr_closed_loop_detox_yolo.py` |
 | Hybrid-PURIFY-OD | Experimental implementation | `model_security_gate/detox/hybrid_purify_train.py`, `scripts/hybrid_purify_detox_yolo.py` |
+| T0 attack zoo | Implemented generator/config | `model_security_gate/attack_zoo/`, `scripts/build_t0_attack_zoo_yolo.py`, `configs/t0_attack_zoo.yaml` |
+| T0 evidence pipeline | Implemented | `scripts/t0_evidence_pipeline.py`, `model_security_gate/t0/` |
+| Multi-attack no-worse planning | Implemented planner/controller | `model_security_gate/detox/multi_attack_constraints.py`, `model_security_gate/detox/t0_pipeline.py` |
 
 ### Verification / Reporting
 
@@ -86,46 +94,36 @@ These are not currently implemented as first-class modules.
 
 | Missing item | Suggested module | Priority | Notes |
 | --- | --- | --- | --- |
-| Neural Cleanse / trigger inversion | `model_security_gate/scan/trigger_inversion_scan.py` | High | Needed for fixed patch/blend trigger reverse engineering and optional unlearning |
-| Activation Clustering | `model_security_gate/scan/activation_cluster_scan.py` | High | Extract YOLO head/backbone features, cluster per class, report suspicious subclusters |
-| Spectral Signatures | `model_security_gate/scan/spectral_scan.py` | High | Robust class-wise spectral outlier scoring for poisoned samples |
-| STRIP | `model_security_gate/scan/strip_scan.py` | Medium | Entropy/consistency under input mixing; useful for input-agnostic triggers |
-| ABS | `model_security_gate/scan/abs_scan.py` | Medium | Artificial neuron stimulation; current channel scan is only a proxy |
+| Full Neural Cleanse trigger inversion | `model_security_gate/scan/trigger_inversion_scan.py` | High | Lightweight anomaly statistic exists; heavy per-target inversion still needed |
+| Hooked Activation Clustering pipeline | `model_security_gate/scan/activation_cluster_scan.py` | High | Lightweight scorer exists; needs YOLO hook export and class-wise evidence reports |
+| Hooked Spectral Signatures pipeline | `model_security_gate/scan/spectral_scan.py` | High | Lightweight scorer exists; needs feature extraction and per-class outlier evidence |
+| Full STRIP pipeline | `model_security_gate/scan/strip_scan.py` | Medium | Lightweight scorer exists; needs image mixing runner and OD-specific entropy report |
+| Full ABS stimulation pipeline | `model_security_gate/scan/abs_scan.py` | Medium | Lightweight channel scorer exists; needs hook export and neuron stimulation runner |
 | Full FMP integration | `model_security_gate/detox/fmp.py` plus pipeline wiring | High | Existing FMP score should influence pruning and Hybrid-PURIFY candidate selection |
 | Formal intake checks | `model_security_gate/intake/` | Medium | Model card, training log, preprocess, class map, artifact hash and provenance validation |
 | Clean teacher policy | config/docs | High | Current experiments can use a reference model, but production needs a truly trusted teacher |
 
 ## Current Experimental Status
 
-Hybrid-PURIFY-OD is wired and runnable, but the latest small-sample experiment did not produce an accepted model.
-
-Observed on a small localized-ASR test:
+The current scoped Green model and T0 evidence pack are available locally:
 
 ```text
-baseline external max ASR: 0.9333
-candidate external max ASR: 0.9667
-baseline external mean ASR: 0.5167
-candidate external mean ASR: 0.7000
-candidate mAP50-95 drop: 0.0169
-final decision: rollback to original model
+runs/t0_evidence_pack_full_v3_2026-05-10/T0_EVIDENCE_PACK.md
+guard-free corrected max ASR: 0.020477815699658702
+trigger-only guard-free max ASR: 0.020477815699658702
+guarded deployment max ASR: 0.017064846416382253
 ```
 
-Interpretation:
-
-```text
-The pipeline can detect failure and roll back, but the current purification recipe is not yet strong enough.
-Do not treat Hybrid-PURIFY-OD as production-safe until external ASR drops and clean mAP remains within threshold.
-```
+Treat this as a scoped T0-candidate evidence pack for the current benchmark, not as a full multi-model/multi-seed paper result.
 
 ## Recommended Contributor Priorities
 
-1. Add Activation Clustering and Spectral Signatures scans.
-2. Wire FMP scores into strong/hybrid pruning and candidate selection.
-3. Upgrade RNP-lite into full unlearn/recover reconstructive pruning.
-4. Add Neural Cleanse-lite trigger inversion for fixed/blend triggers.
-5. Add a formal benchmark protocol with separate replay and held-out external suites.
-6. Add Grad-CAM/EigenCAM localization checks for wrong-region attention.
-7. Strengthen OGA/ODA-specific losses so ASR can drop without destroying clean mAP.
+1. Train/evaluate the T0 poison-model matrix across model family, attack family, seed, and poison rate.
+2. Add a matrix-level evidence aggregator for pass rates, Wilson CIs, and residual decompositions.
+3. Upgrade lightweight Neural Cleanse/AC/Spectral/STRIP/ABS scorers into hooked end-to-end CLI pipelines.
+4. Wire FMP/ANP/RNP/I-BAU/PGBD into the multi-attack no-worse detox loop with ablations.
+5. Add ODSCAN/TRACE/NAD/ANP/RNP/I-BAU public baseline comparisons.
+6. Add adaptive attacker benchmarks after the fixed attack zoo matrix is reproducible.
 
 ## Validation Expectations
 

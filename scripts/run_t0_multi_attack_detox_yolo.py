@@ -10,10 +10,57 @@ from model_security_gate.utils.io import write_json
 def parse_args():
     p=argparse.ArgumentParser(description="T0 multi-attack no-worse detox orchestrator")
     p.add_argument("--model",required=True); p.add_argument("--data-yaml",required=True); p.add_argument("--out",required=True); p.add_argument("--external-roots",nargs="+",required=True); p.add_argument("--residual-report"); p.add_argument("--profile",choices=["auto","geometry","semantic_causal","multi_attack"],default="auto"); p.add_argument("--target-classes",nargs="+",default=["helmet"]); p.add_argument("--device",default="cuda"); p.add_argument("--amp",action="store_true"); p.add_argument("--execute",action="store_true"); return p.parse_args()
-def cmd_for(stage,a,model):
-    if stage["profile"] in {"geometry","semantic_causal"}: return ["python","scripts/semantic_surgical_repair_yolo.py","--model",model,"--data-yaml",a.data_yaml,"--out",str(Path(a.out)/stage["name"]),"--external-roots",*a.external_roots,"--target-classes",*a.target_classes,"--device",a.device]
-    if stage["profile"]=="multi_attack": return ["python","scripts/hybrid_purify_detox_yolo.py","--model",model,"--data-yaml",a.data_yaml,"--out",str(Path(a.out)/stage["name"]),"--external-roots",*a.external_roots,"--target-classes",*a.target_classes]
-    return ["python","scripts/run_external_hard_suite.py","--model",model,"--external-roots",*a.external_roots,"--target-classes",*a.target_classes,"--out",str(Path(a.out)/stage["name"])]
+def cmd_for(stage, a, model):
+    if stage["profile"] in {"geometry", "semantic_causal"}:
+        return [
+            "python",
+            "scripts/semantic_surgical_repair_yolo.py",
+            "--model",
+            model,
+            "--data-yaml",
+            a.data_yaml,
+            "--out",
+            str(Path(a.out) / stage["name"]),
+            "--external-roots",
+            *a.external_roots,
+            "--target-classes",
+            *a.target_classes,
+            "--device",
+            a.device,
+        ]
+    if stage["profile"] == "multi_attack":
+        return [
+            "python",
+            "scripts/hybrid_purify_detox_yolo.py",
+            "--model",
+            model,
+            "--data-yaml",
+            a.data_yaml,
+            "--out",
+            str(Path(a.out) / stage["name"]),
+            "--external-eval-roots",
+            *a.external_roots,
+            "--external-replay-roots",
+            *a.external_roots,
+            "--target-classes",
+            *a.target_classes,
+        ]
+    return [
+        "python",
+        "scripts/run_external_hard_suite.py",
+        "--model",
+        model,
+        "--data-yaml",
+        a.data_yaml,
+        "--roots",
+        *a.external_roots,
+        "--target-classes",
+        *a.target_classes,
+        "--out",
+        str(Path(a.out) / stage["name"]),
+        "--device",
+        a.device,
+    ]
 def main():
     a=parse_args(); Path(a.out).mkdir(parents=True,exist_ok=True); residuals={}
     if a.residual_report: residuals=summarize_asr(load_json(a.residual_report))["attack_asr"]

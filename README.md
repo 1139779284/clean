@@ -8,6 +8,14 @@
 
 请先看 [`docs/ALGORITHM_COVERAGE_AND_ROADMAP.md`](docs/ALGORITHM_COVERAGE_AND_ROADMAP.md)。这里列出了当前已经接入的扫描/净化/验收模块，也明确标出仍缺失或只是近似实现的算法，包括 Neural Cleanse、Activation Clustering、Spectral Signatures、STRIP、ABS、RNP-lite 与完整 FMP 接入。
 
+当前 T0 方向状态见：
+
+- [`docs/P0_P1_P2_PROGRESS_2026-05-10.md`](docs/P0_P1_P2_PROGRESS_2026-05-10.md)
+- [`docs/T0_PUBLIC_MATERIALS_2026-05-10.md`](docs/T0_PUBLIC_MATERIALS_2026-05-10.md)
+- [`docs/T0_ALGORITHM_ATTACKZOO_UPGRADE_2026-05-09.md`](docs/T0_ALGORITHM_ATTACKZOO_UPGRADE_2026-05-09.md)
+
+已拆分四种 Green 口径：corrected guard-free model detox、trigger-only guard-free model detox、guarded deployment safety、scoped engineering acceptance。不要把 guarded deployment 指标直接写成 weight-level detox 结果。
+
 ## 安装
 
 ```bash

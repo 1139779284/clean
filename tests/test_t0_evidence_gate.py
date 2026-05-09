@@ -31,6 +31,34 @@ def test_t0_evidence_accepts_strong_guard_free_with_counts():
     assert result["tier"] in {"t0_candidate", "t1_strong_candidate"}
 
 
+def test_t0_evidence_requires_heldout_leakage_audit():
+    gf = {"max_asr": 0.0, "mean_asr": 0.0, "asr_matrix": {"badnet_oda": 0.0}}
+    result = evaluate_t0_evidence(
+        guard_free_external=gf,
+        clean_metrics_before={"map50_95": 0.5},
+        clean_metrics_after={"map50_95": 0.5},
+        benchmark_audit={"passed": True},
+    )
+    assert result["accepted"] is False
+    assert any("held-out leakage" in x for x in result["blocked_reasons"])
+
+
+def test_t0_evidence_accepts_heldout_checked_inside_benchmark_audit():
+    gf = {
+        "max_asr": 0.0,
+        "mean_asr": 0.0,
+        "asr_matrix": {"badnet_oda": 0.0},
+        "top_attacks": [{"attack": "badnet_oda", "asr": 0.0, "n": 300}],
+    }
+    result = evaluate_t0_evidence(
+        guard_free_external=gf,
+        clean_metrics_before={"map50_95": 0.5},
+        clean_metrics_after={"map50_95": 0.5},
+        benchmark_audit={"passed": True, "config": {"heldout_roots": ["held"]}},
+    )
+    assert result["accepted"] is True
+
+
 def test_t0_evidence_blocks_bad_attack_asr():
     gf = {"max_asr": 0.2, "mean_asr": 0.1, "asr_matrix": {"wanet_oga": 0.2}}
     result = evaluate_t0_evidence(guard_free_external=gf, benchmark_audit={"passed": True}, heldout_leakage={"n_overlaps": 0})

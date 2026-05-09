@@ -65,6 +65,12 @@ def _tier(blocked: Sequence[str], warnings: Sequence[str], *, has_guard_free: bo
     return "engineering_green_only"
 
 
+def _benchmark_has_heldout_audit(benchmark_audit: Mapping[str, Any] | None) -> bool:
+    config = (benchmark_audit or {}).get("config") or {}
+    roots = config.get("heldout_roots") or []
+    return bool(roots)
+
+
 def evaluate_t0_evidence(
     *,
     guard_free_external: Mapping[str, Any] | None = None,
@@ -91,9 +97,12 @@ def evaluate_t0_evidence(
             blocked.append("benchmark integrity audit failed")
 
     if cfg.require_no_heldout_leakage:
-        leakage_count = int((heldout_leakage or {}).get("n_overlaps", (heldout_leakage or {}).get("detected_overlaps", 0)) or 0)
-        if leakage_count > 0:
-            blocked.append(f"held-out leakage detected: {leakage_count}")
+        if heldout_leakage is None and not _benchmark_has_heldout_audit(benchmark_audit):
+            blocked.append("missing held-out leakage audit")
+        else:
+            leakage_count = int((heldout_leakage or {}).get("n_overlaps", (heldout_leakage or {}).get("detected_overlaps", 0)) or 0)
+            if leakage_count > 0:
+                blocked.append(f"held-out leakage detected: {leakage_count}")
 
     if cfg.require_guard_free_primary and not guard_free:
         blocked.append("missing guard-free corrected external result")

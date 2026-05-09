@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .evidence_gate import T0EvidenceGateConfig, evaluate_t0_evidence
+from .green_profiles import build_green_profile_scorecard
 from .metrics import compare_guarded_unguarded, load_json
 from .residuals import build_frontier_plan
 
@@ -46,7 +47,13 @@ def build_t0_evidence_pack(
     )
     comparison = compare_guarded_unguarded(unguarded=gf or None, guarded=gd or None) if (gf or gd) else {}
     plan = build_frontier_plan([r for r in [gf, gd, to] if r], min_asr=0.001)
-    payload = {"gate": gate, "guarded_vs_unguarded": comparison, "frontier_plan": plan}
+    green_profiles = build_green_profile_scorecard(gate, comparison)
+    payload = {
+        "gate": gate,
+        "green_profiles": green_profiles,
+        "guarded_vs_unguarded": comparison,
+        "frontier_plan": plan,
+    }
     (out / "t0_evidence_pack.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     lines: list[str] = []
@@ -70,6 +77,15 @@ def build_t0_evidence_pack(
         if item:
             lines.append(f"- {name}: max_asr={item.get('max_asr')}, mean_asr={item.get('mean_asr')}")
     lines.append(f"- mAP50-95 drop: {metrics.get('map50_95_drop')}")
+    lines.append(_section("Green Claim Profiles"))
+    for row in green_profiles.get("profiles", []):
+        mark = "PASS" if row.get("passed") else "FAIL"
+        lines.append(f"- {mark} `{row.get('name')}`: {row.get('claim_type')} ({row.get('evidence_key')})")
+    split = green_profiles.get("contribution_split", {})
+    lines.append(_section("Guarded Safety vs Model Detox Contribution"))
+    lines.append(f"- model_detox_primary: `{split.get('model_detox_primary')}`")
+    lines.append(f"- guard_is_primary: `{split.get('guard_is_primary')}`")
+    lines.append(f"- guard_max_asr_reduction: `{split.get('guard_max_asr_reduction')}`")
     lines.append(_section("Recommended Frontier Phase Order"))
     for phase in plan.get("recommended_phase_order", []):
         lines.append(f"- {phase}")
