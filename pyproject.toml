@@ -30,7 +30,8 @@ packages = [
   "model_security_gate.intake",
   "model_security_gate.utils",
   "model_security_gate.verify",
-  "model_security_gate.report"
+  "model_security_gate.report",
+  "model_security_gate.t0"
 ]
 
 [tool.pixi.workspace]
@@ -77,6 +78,10 @@ frontier-t1-autodetox = "python scripts/frontier_t1_autodetox_yolo.py"
 semantic-surgical-repair = "python scripts/semantic_surgical_repair_yolo.py"
 ci-help-smoke-all = "python scripts/ci_help_smoke_all.py"
 check-heldout-leakage = "python scripts/check_heldout_leakage.py"
+
+t0-benchmark-audit = "python scripts/t0_benchmark_audit.py"
+t0-evidence-pack = "python scripts/t0_evidence_pack.py"
+t0-frontier-plan = "python scripts/t0_frontier_plan.py"
 pytest = "python -m pytest -q"
 ci-smoke = "python -m compileall -q model_security_gate scripts tests && python -m pytest -q"
 

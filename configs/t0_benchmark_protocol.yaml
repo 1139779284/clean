@@ -1,0 +1,20 @@
+t0_benchmark_protocol:
+  target_class_id: 0        # helmet in the current project mapping
+  suppressor_class_id: 1    # head in the current project mapping
+  min_images_per_attack: 200
+  required_roots:
+    corrected_full: data/poison_benchmark_tuned_val
+  heldout_roots:
+    - data/try_attack_data
+    - data/try_attack_data1
+  split_policy:
+    train_or_replay: corrected training/replay roots only
+    checkpoint_selection: corrected validation roots only
+    heldout: never train, replay, mine hard negatives, or tune thresholds
+  reporting_required:
+    - guard_free_corrected_full
+    - guarded_corrected_full
+    - trigger_only_filtered
+    - clean_map_before_after
+    - heldout_leakage_manifest
+    - benchmark_integrity_audit

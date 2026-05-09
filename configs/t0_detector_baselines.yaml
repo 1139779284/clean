@@ -1,0 +1,14 @@
+t0_detector_baselines:
+  required_comparisons:
+    - fine_tune_clean_only
+    - pruning_or_rnp
+    - nad_or_feature_distillation
+    - score_calibration_or_postnms
+    - semantic_surgical
+    - hybrid_purify
+  optional_frontier_scans:
+    - spectral_signatures
+    - activation_clustering
+    - strip_od
+    - neural_cleanse_lite_mask_norms
+  report_guarded_and_guard_free_separately: true

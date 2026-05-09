@@ -1,0 +1,21 @@
+t0_evidence_gate:
+  # T0-style claims must separate guard-free weight purification from guarded
+  # deployment safety. Guarded metrics can be reported, but they are not the
+  # primary weight-level detox result.
+  max_guard_free_asr: 0.05
+  max_guard_free_mean_asr: 0.02
+  max_guarded_asr: 0.05
+  max_trigger_only_asr: 0.05
+  max_clean_map50_95_drop: 0.03
+  require_integrity_pass: true
+  require_no_heldout_leakage: true
+  require_guard_free_primary: true
+  confidence: 0.95
+  max_wilson_upper_for_t0: 0.05
+  zero_failure_required_rate: 0.01
+  required_attack_asr:
+    badnet_oda: 0.05
+    badnet_oga: 0.05
+    blend_oga: 0.05
+    semantic_green_cleanlabel: 0.05
+    wanet_oga: 0.05

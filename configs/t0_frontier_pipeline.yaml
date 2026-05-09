@@ -1,0 +1,27 @@
+t0_frontier_pipeline:
+  objective: guard_free_weight_level_detox_first_guarded_deployment_second
+  preferred_phase_order:
+    - benchmark_integrity_audit
+    - guard_free_corrected_full_external_eval
+    - residual_decomposition
+    - geometry_consistency_and_roi_stability
+    - semantic_causal_negative_hardening
+    - target_present_recall_preservation
+    - target_absent_false_positive_suppression
+    - clean_recovery_and_calibration
+    - evidence_pack
+  default_constraints:
+    guard_free_max_asr: 0.05
+    guard_free_mean_asr: 0.02
+    trigger_only_max_asr: 0.05
+    clean_map50_95_drop: 0.03
+  default_controller:
+    wanet_oga:
+      limit: 0.05
+      initial_lambda: 3.0
+    semantic_green_cleanlabel:
+      limit: 0.05
+      initial_lambda: 3.0
+    badnet_oda:
+      limit: 0.05
+      initial_lambda: 2.0
