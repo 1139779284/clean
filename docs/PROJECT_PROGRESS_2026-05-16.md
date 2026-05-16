@@ -256,6 +256,7 @@ wanet_oga 单元：
 | v2 visible OGA | lagrangian_2cycle | 97.619% | 16.667% | 5.701 pp | 继续下降，但仍未过 ASR/mAP smoke |
 | v2 visible OGA | lagrangian_no_recovery | 97.619% | 14.286% | 2.211 pp | CFRC reduction 认证通过，仍未过 10% ASR |
 | v2 visible OGA | lagrangian_aggressive | 97.619% | 0.000% | 4.970 pp | smoke 通过，默认 CFRC mAP 容差未过 |
+| v2 visible OGA | lagrangian_aggressive_balanced_fixed | 97.619% | 2.381% | 3.348 pp | smoke 通过；默认 CFRC 仅因 3 pp mAP 容差未认证 |
 | v3 SIG OGA | static_lambda | 69.048% | 0.000% | 3.960 pp | 通过 |
 | v3 SIG OGA | lagrangian_lambda | 69.048% | 0.000% | 3.974 pp | 通过 |
 
@@ -301,6 +302,14 @@ clean_recovery phase 保留外部 hard-suite replay，`--external-replay-floor-r
 允许无失败样本时重复 floor replay。floor repeat 10 的试跑把 recovery ASR 从
 40.476% 压到 9.524%，但 mAP50-95 相对 aggressive checkpoint 又下降 2.412 pp，
 因此仍回滚。下一步应调低 recovery LR/步数，或增加“ASR≤10% 后优先 mAP”的恢复候选选择规则。
+
+已添加并验证 `--prefer-passing-clean-map` 候选选择规则：当当前 best 和新候选都
+通过 smoke gate 时，优先选择 clean mAP drop 更小的候选；同时修复了“已通过的
+best 被未通过但 ASR 更低的候选替换”的选择漏洞。balanced fixed 复跑中，
+`best_strong_detox.pt` 达到 2.381% ASR、mAP drop 3.348 pp 并成为 final model；
+0.000% ASR 的 `last_strong_detox.pt` 因 mAP drop 4.883 pp 未覆盖它。该 run 的
+CFRC reduction path 仍很强（CMR=0.9048，Holm p=1.819e-12），但默认 CFRC 总证书
+仍因 clean mAP50-95 drop 0.03348 > 0.03 被挡住。
 
 ---
 
@@ -446,7 +455,8 @@ model_security_gate/docs/
 - **v2 ASR**：97.6%（可见 trigger）
 - **v3 ASR**：69.0%（不可见 trigger，PSNR 27.9 dB）
 - **v3 ASR delta**：64.3 pp（相对 clean baseline）
-- **v2 当前最佳 smoke 净化**：0.000% ASR（aggressive Lagrangian，mAP drop 4.970 pp，默认 CFRC mAP 容差未过）
+- **v2 当前推荐 smoke 净化**：2.381% ASR（balanced aggressive Lagrangian，mAP drop 3.348 pp，默认 CFRC 仅差 0.348 pp mAP）
+- **v2 当前最低 ASR smoke 净化**：0.000% ASR（aggressive Lagrangian，mAP drop 4.970 pp，默认 CFRC mAP 容差未过）
 - **v2 当前最佳 CFRC reduction 净化**：14.286% ASR（no-recovery Lagrangian，mAP drop 2.211 pp，CFRC reduction 认证通过）
 
 ### 矩阵状态
@@ -501,6 +511,7 @@ pixi run hybrid-purify-detox-yolo
 - **2026-05-16**：新增 v2 aggressive OGA hardening；ASR 降至 0.000%，通过 10% ASR / 5 pp mAP smoke gate
 - **2026-05-16**：验证 aggressive checkpoint 上普通 clean recovery 会反弹到 40.476% ASR，后续需要 ASR-aware recovery
 - **2026-05-16**：新增 ASR-aware recovery replay/floor-repeat 开关；floor10 将 recovery ASR 控制到 9.524%，但 mAP50-95 未恢复
+- **2026-05-16**：新增 passing-candidate clean mAP 优先选择；v2 balanced fixed final 达到 2.381% ASR、3.348 pp mAP drop
 - **2026-05-10**：P0/P1/P2 详细进度更新，添加拉格朗日控制器和 CFRC
 - **2026-05-09**：校正套件净化状态，修复类别重映射问题
 - **2026-05-08**：完整算法升级和架构文档

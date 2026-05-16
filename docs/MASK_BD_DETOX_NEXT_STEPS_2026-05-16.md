@@ -122,6 +122,15 @@ v2 visible OGA aggressive hardening:
   CFRC: FAIL only because default clean mAP drop tolerance is 3 pp
   run root: model_security_gate/runs/mask_bd_v2_detox_aggressive_lagrangian_2026-05-16/
 
+v2 visible OGA balanced candidate selection:
+  lagrangian_aggressive_balanced_fixed: 97.619% -> 2.381% ASR, mAP drop 3.348 pp
+  selected final: cycle 1 OGA hardening best_strong_detox.pt
+  lower-ASR candidate kept out: 0.000% ASR, mAP drop 4.883 pp
+  smoke gate: passed
+  CFRC: FAIL only because clean mAP drop 0.03348 > default 0.03 tolerance
+  CFRC reduction path: CMR 0.9048, Holm p 1.819e-12
+  run root: model_security_gate/runs/mask_bd_v2_detox_aggressive_balanced_fixed_2026-05-16/
+
 v3 SIG OGA:
   static_lambda:     69.048% -> 0.000% ASR, mAP drop 3.960 pp, passed
   lagrangian_lambda: 69.048% -> 0.000% ASR, mAP drop 3.974 pp, passed
@@ -146,11 +155,12 @@ Notes:
   follow-up reached 16.667% ASR, but phase finetune and clean recovery both
   rebound ASR sharply.  The final manifest correctly keeps the best feature
   purifier checkpoint.  The no-recovery ablation improves the best point to
-  14.286% ASR with only 2.211 pp mAP drop, and the aggressive hardening run
-  reaches 0.000% ASR with 4.970 pp mAP drop.  The next v2 work is now a
-  clean-utility recovery problem: keep aggressive ASR removal while moving
-  mAP drop from the smoke tolerance band back under the default 3 pp CFRC
-  tolerance.
+  14.286% ASR with only 2.211 pp mAP drop, and aggressive hardening reaches
+  0.000% ASR with 4.970 pp mAP drop.  With passing-candidate clean mAP
+  preference enabled, the preferred v2 smoke model is now 2.381% ASR with
+  3.348 pp mAP drop.  The next v2 work is a narrower clean-utility recovery
+  problem: keep ASR under the smoke ceiling while moving mAP drop under the
+  default 3 pp CFRC tolerance.
 
 ## v2 Recovery Rebound Diagnosis
 
@@ -184,6 +194,14 @@ ASR-aware recovery floor10:
   recovery mAP50-95 delta:       -2.412 pp from aggressive checkpoint
   selected final model:          original aggressive checkpoint
   result:                        ASR held under smoke, but clean utility did not recover
+
+balanced candidate selection:
+  final ASR:                      2.381%
+  final mAP drop:                 3.348 pp
+  rejected lower-ASR candidate:   0.000% ASR, 4.883 pp mAP drop
+  clean recovery candidate:       14.286% ASR, 3.211 pp mAP drop
+  CFRC reduction path:            CMR 0.9048, Holm p 1.819e-12
+  CFRC total status:              uncertified; mAP drop 0.03348 > 0.03
 ```
 
 Interpretation:
@@ -198,16 +216,19 @@ Interpretation:
   inside the default CFRC tolerance and the remaining gap is absolute ASR:
   14.286% means 6/42 triggered images still fire; the smoke pass needs 4/42.
 - Stronger OGA feature hardening closes the absolute-ASR gap completely on the
-  smoke set, but costs clean mAP.  This changes the next algorithm task from
-  "can we detox v2?" to "can we recover roughly 2 pp mAP without ASR rebound?"
+  smoke set, but costs clean mAP.  Balanced candidate selection preserves most
+  of the ASR removal while recovering about 1.5 pp mAP versus the 0% ASR
+  aggressive checkpoint.  This changes the next algorithm task from "can we
+  detox v2?" to "can we recover the remaining roughly 0.35 pp mAP needed for
+  the default CFRC tolerance without ASR rebound?"
 - Guarded clean-only recovery confirms that ordinary recovery is not enough:
   it immediately rebounds ASR to 40.476% and is rolled back.  The next recovery
   variant needs to keep OGA failure replay or feature constraints active while
   restoring clean utility.
 - ASR-aware recovery with floor replay repeat 10 keeps ASR under the 10% smoke
-  ceiling, but still hurts mAP50-95.  The next useful variant should reduce
-  recovery LR/steps or add a recovery selection rule that optimizes mAP only
-  among candidates staying below the ASR ceiling.
+  ceiling, but still hurts mAP50-95.  The candidate selector now optimizes mAP
+  among passing candidates; the next useful variant should use that rule with
+  a gentler recovery schedule and target the remaining default-CFRC mAP gap.
 
 Recovery-guard run already tested:
 
