@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -19,7 +19,33 @@ from model_security_gate.utils.io import (
     write_yolo_labels,
 )
 
+try:  # pragma: no cover - import guard
+    from model_security_gate.attack_zoo.specs import AttackSpec
+    from model_security_gate.attack_zoo.image_ops import apply_attack_image
+
+    _ATTACK_ZOO_AVAILABLE = True
+except Exception:  # noqa: BLE001 - fall back to legacy helpers if attack_zoo missing
+    AttackSpec = None  # type: ignore[assignment]
+    apply_attack_image = None  # type: ignore[assignment]
+    _ATTACK_ZOO_AVAILABLE = False
+
 XYXY = Tuple[float, float, float, float]
+
+# Legacy position aliases accepted in AttackTransformConfig.params["position"].
+_LEGACY_POSITION_ALIASES: Dict[str, str] = {
+    "br": "bottom_right",
+    "bl": "bottom_left",
+    "tr": "top_right",
+    "tl": "top_left",
+    "bottom_right": "bottom_right",
+    "bottom_left": "bottom_left",
+    "top_right": "top_right",
+    "top_left": "top_left",
+    "center": "center",
+    "random": "random",
+    "object_attached": "object_attached",
+    "full": "full",
+}
 
 
 @dataclass
@@ -52,14 +78,20 @@ class ASRAwareDatasetConfig:
     max_images: int = 0
     target_class_ids: Sequence[int] | None = None
     attacks: Sequence[AttackTransformConfig] = field(default_factory=lambda: default_attack_suite())
+    # Patch G: stems to exclude from OGA negative sampling.  These are
+    # head-only images that actually contain helmet (label noise from
+    # kagglehub).  Using them as OGA negatives teaches the model to suppress
+    # helmet on images that genuinely have helmet, damaging clean mAP.
+    # Load from ``head_only_blacklist.json`` via ``load_blacklist()``.
+    blacklist_stems: Sequence[str] = field(default_factory=tuple)
 
 
 def default_attack_suite() -> List[AttackTransformConfig]:
     return [
-        AttackTransformConfig("badnet_oga", kind="badnet_patch", goal="oga", poison_negative=True, poison_positive=False, params={"patch_frac": 0.09, "position": "br"}),
+        AttackTransformConfig("badnet_oga", kind="badnet_patch", goal="oga", poison_negative=True, poison_positive=False, params={"patch_frac": 0.06, "position": "bottom_right"}),
         AttackTransformConfig("blend_oga", kind="blend", goal="oga", poison_negative=True, poison_positive=False, params={"alpha": 0.18, "freq": 8}),
         AttackTransformConfig("wanet_oga", kind="wanet", goal="oga", poison_negative=True, poison_positive=False, params={"amplitude": 0.05, "grid": 5}),
-        AttackTransformConfig("badnet_oda", kind="badnet_patch", goal="oda", poison_negative=False, poison_positive=True, params={"patch_frac": 0.09, "position": "br"}),
+        AttackTransformConfig("badnet_oda", kind="badnet_patch", goal="oda", poison_negative=False, poison_positive=True, params={"patch_frac": 0.06, "position": "object_attached"}),
         AttackTransformConfig("semantic_green_cleanlabel", kind="semantic_green", goal="semantic", poison_negative=True, poison_positive=True, params={"strength": 0.42}),
     ]
 
@@ -81,6 +113,25 @@ def _has_target(labels: Sequence[Mapping[str, Any]], target_ids: Sequence[int] |
         return bool(labels)
     wanted = set(int(x) for x in target_ids)
     return any(int(lab["cls_id"]) in wanted for lab in labels)
+
+
+def _first_target_box(
+    labels: Sequence[Mapping[str, Any]],
+    target_ids: Sequence[int] | None,
+) -> Optional[Tuple[float, float, float, float]]:
+    """Return the xyxy pixel bbox of the first target-class label, if any."""
+    if not labels:
+        return None
+    wanted = {int(x) for x in (target_ids or [])}
+    for lab in labels:
+        cls_id = int(lab.get("cls_id", -1))
+        if wanted and cls_id not in wanted:
+            continue
+        xyxy = lab.get("xyxy")
+        if xyxy is None:
+            continue
+        return (float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3]))
+    return None
 
 
 def _sanitize_name(name: str) -> str:
@@ -161,17 +212,157 @@ def _semantic_green(img: np.ndarray, strength: float = 0.42) -> np.ndarray:
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
-def apply_attack_transform(img: np.ndarray, spec: AttackTransformConfig, seed: int = 0) -> np.ndarray:
+def apply_attack_transform(
+    img: np.ndarray,
+    spec: AttackTransformConfig,
+    seed: int = 0,
+    box_xyxy: Optional[Sequence[float]] = None,
+) -> np.ndarray:
+    """Apply a detox-side attack transform, aligned with ``attack_zoo``.
+
+    This is a thin wrapper over ``attack_zoo.image_ops.apply_attack_image`` so
+    synthesized training samples share trigger parameters with the real
+    evaluation suite (fixing an OD backdoor detox train/eval mismatch).
+
+    Legacy ``AttackTransformConfig.params`` keys (``patch_frac``, ``position``,
+    ``alpha``, ``freq``, ``amplitude``, ``grid``, ``strength``) are translated
+    to the corresponding ``AttackSpec`` fields. If ``attack_zoo`` is unavailable
+    the legacy NumPy helpers are used as a fallback.
+    """
     params = dict(spec.params or {})
     kind = spec.kind.lower()
+    goal = (spec.goal or "oga").lower()
+
     if kind in {"none", "clean"}:
         return img.copy()
+
+    # Input is BGR (matches cv2 pipeline). attack_zoo operates on RGB-like
+    # numeric arrays but the transforms are channel-agnostic aside from the
+    # semantic "green" polygon, which is authored in RGB. Convert on the way
+    # in/out for semantic so the polygon renders green in the BGR output.
+    needs_rgb_swap = kind == "semantic_green"
+
+    if _ATTACK_ZOO_AVAILABLE and AttackSpec is not None and apply_attack_image is not None:
+        try:
+            attack_spec = _build_attack_zoo_spec(spec, kind, goal, params)
+        except ValueError:
+            return _legacy_apply(img, spec, seed, kind, params)
+        work = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if needs_rgb_swap else img
+        out = apply_attack_image(work, attack_spec, seed=seed, box_xyxy=box_xyxy)
+        if needs_rgb_swap:
+            out = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
+        return out
+
+    return _legacy_apply(img, spec, seed, kind, params)
+
+
+def _normalize_position(pos: Any) -> str:
+    if pos is None:
+        return "bottom_right"
+    return _LEGACY_POSITION_ALIASES.get(str(pos).lower(), str(pos).lower())
+
+
+def _build_attack_zoo_spec(
+    spec: AttackTransformConfig,
+    kind: str,
+    goal: str,
+    params: Dict[str, Any],
+):
+    """Translate a legacy ``AttackTransformConfig`` into an ``AttackSpec``."""
+    if AttackSpec is None:  # pragma: no cover - only hit if attack_zoo missing
+        raise ValueError("attack_zoo.AttackSpec unavailable")
+
+    extra_params: Dict[str, Any] = {}
+
     if kind == "badnet_patch":
-        return _badnet_patch(img, **params)
+        trigger_size = float(params.get("patch_frac", params.get("trigger_size", 0.06)))
+        if goal == "oda":
+            trigger_location = _normalize_position(params.get("position", "object_attached"))
+            # If caller insists on a generic corner for ODA, still honor it, but
+            # the default path stays object_attached.
+        else:
+            trigger_location = _normalize_position(params.get("position", "bottom_right"))
+        return AttackSpec(
+            name=spec.name,
+            family="badnet",
+            goal="oda" if goal == "oda" else "oga",
+            trigger_type="patch",
+            trigger_size=trigger_size,
+            trigger_location=trigger_location,
+        )
+
     if kind == "blend":
-        return _blend_pattern(img, seed=seed, **params)
+        return AttackSpec(
+            name=spec.name,
+            family="blend",
+            goal=goal if goal in {"oda", "oga"} else "oga",
+            trigger_type="blend",
+            trigger_size=float(params.get("trigger_size", 0.10)),
+            trigger_alpha=float(params.get("alpha", params.get("trigger_alpha", 0.18))),
+        )
+
     if kind in {"wanet", "smooth_warp"}:
-        return _smooth_warp(img, seed=seed, **params)
+        strength = float(params.get("strength", params.get("amplitude", 3.0)))
+        # Legacy amplitude was in relative image fraction (~0.05); attack_zoo
+        # strength is in pixels. Scale up small floats to a reasonable pixel
+        # displacement so the trigger is still perceptible.
+        if strength < 1.0:
+            strength = max(2.0, strength * 60.0)
+        return AttackSpec(
+            name=spec.name,
+            family="wanet",
+            goal=goal if goal in {"oda", "oga"} else "oga",
+            trigger_type="warp",
+            trigger_location="full",
+            params={"strength": strength},
+        )
+
+    if kind == "semantic_green":
+        return AttackSpec(
+            name=spec.name,
+            family="semantic",
+            goal="semantic",
+            trigger_type="semantic",
+            trigger_location="context",
+            clean_label=True,
+        )
+
+    if kind == "sinusoidal":
+        extra_params["amplitude"] = float(params.get("amplitude", 10.0))
+        extra_params["period"] = float(params.get("period", params.get("freq_period", 37.0)))
+        return AttackSpec(
+            name=spec.name,
+            family="sig",
+            goal=goal if goal in {"oda", "oga"} else "oga",
+            trigger_type="low_frequency",
+            trigger_location="full",
+            params=extra_params,
+        )
+
+    raise ValueError(f"Unknown attack transform kind: {spec.kind!r}")
+
+
+def _legacy_apply(
+    img: np.ndarray,
+    spec: AttackTransformConfig,
+    seed: int,
+    kind: str,
+    params: Dict[str, Any],
+) -> np.ndarray:
+    """Fallback to the original NumPy-only helpers (used if attack_zoo missing)."""
+    if kind == "badnet_patch":
+        legacy_params = dict(params)
+        legacy_params.pop("trigger_size", None)
+        return _badnet_patch(img, **legacy_params)
+    if kind == "blend":
+        legacy_params = dict(params)
+        legacy_params.pop("trigger_size", None)
+        legacy_params.pop("trigger_alpha", None)
+        return _blend_pattern(img, seed=seed, **legacy_params)
+    if kind in {"wanet", "smooth_warp"}:
+        legacy_params = dict(params)
+        legacy_params.pop("strength", None)
+        return _smooth_warp(img, seed=seed, **legacy_params)
     if kind == "semantic_green":
         return _semantic_green(img, **params)
     if kind == "sinusoidal":
@@ -221,8 +412,9 @@ def build_asr_aware_yolo_dataset(
 
     paths = list_images(images_dir, max_images=cfg.max_images if cfg.max_images and cfg.max_images > 0 else None)
     train_paths, val_paths = _split_paths(paths, cfg.val_fraction, cfg.seed)
-    stats: Dict[str, Any] = {"train": 0, "val": 0, "clean": 0, "attack": 0, "skipped_attack": 0, "by_attack": {}}
+    stats: Dict[str, Any] = {"train": 0, "val": 0, "clean": 0, "attack": 0, "skipped_attack": 0, "skipped_blacklist": 0, "by_attack": {}}
     target_ids = list(cfg.target_class_ids or [])
+    blacklist_set = set(str(s) for s in (cfg.blacklist_stems or []))
 
     for split, split_paths in [("train", train_paths), ("val", val_paths)]:
         for img_idx, img_path in enumerate(tqdm(split_paths, desc=f"Build ASR-aware {split}")):
@@ -242,9 +434,18 @@ def build_asr_aware_yolo_dataset(
                 if not _should_include(labels, target_ids, spec):
                     stats["skipped_attack"] += 1
                     continue
+                # Patch G: skip blacklisted stems for OGA negatives.
+                if blacklist_set and spec.goal.lower() in ("oga", "semantic", "all", "both"):
+                    if not _has_target(labels, target_ids) and img_path.stem in blacklist_set:
+                        stats["skipped_blacklist"] += 1
+                        continue
+                # For ODA-goal specs, pass the first target-class bbox so
+                # object_attached placement lands on a real helmet box (mirrors
+                # the real attack_zoo evaluation suite).
+                box_xyxy = _first_target_box(labels, target_ids) if spec.goal.lower() == "oda" else None
                 for rep in range(max(1, int(cfg.include_attack_repeat))):
                     seed = int(cfg.seed + 1009 * img_idx + 101 * rep + abs(hash(spec.name)) % 997)
-                    v_img = apply_attack_transform(img, spec, seed=seed)
+                    v_img = apply_attack_transform(img, spec, seed=seed, box_xyxy=box_xyxy)
                     suffix = _sanitize_name(f"{spec.name}_{rep}" if cfg.include_attack_repeat > 1 else spec.name)
                     out_img = images_out / split / f"{base_stem}_{suffix}{cfg.image_ext}"
                     out_lab = labels_out / split / f"{base_stem}_{suffix}.txt"
@@ -298,3 +499,15 @@ def class_names_from_yaml_or_mapping(data_yaml: str | Path | None, class_names: 
             return {int(k): str(v) for k, v in class_names.items()}
         return {i: str(v) for i, v in enumerate(class_names)}
     return load_class_names_from_data_yaml(data_yaml)
+
+
+def load_blacklist(path: str | Path | None) -> List[str]:
+    """Load a head_only_blacklist.json and return the list of stems to skip."""
+    if not path:
+        return []
+    p = Path(path)
+    if not p.exists():
+        return []
+    import json
+    data = json.loads(p.read_text(encoding="utf-8"))
+    return list(data.get("blacklist", []))

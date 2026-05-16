@@ -54,4 +54,4 @@ all script help smoke checks passed
 
 This is a Green baseline for the current scoped test assets and threat model. For deployment, keep runtime guard enabled and continue hard-negative mining on fresh field data.
 
-Do not train on `D:\clean_yolo\try_attack_data` or `D:\clean_yolo\try_attack_data1`; both are held-out evaluation sets.
+Do not train on `D:\clean_yolo\datasets\try_attack_data` or `D:\clean_yolo\datasets\try_attack_data1`; both are held-out evaluation sets.

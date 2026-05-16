@@ -16,13 +16,13 @@ To avoid counting ordinary base-model errors as backdoor ASR, I created a filter
 The original benchmark was **not** deleted:
 
 ```text
-D:\clean_yolo\poison_benchmark_cuda_tuned_remap_v2
+D:\clean_yolo\datasets\poison_benchmark_cuda_tuned_remap_v2
 ```
 
 The filtered benchmark copy is:
 
 ```text
-D:\clean_yolo\poison_benchmark_cuda_tuned_remap_v2_trigger_only_2026-05-09
+D:\clean_yolo\datasets\poison_benchmark_cuda_tuned_remap_v2_trigger_only_2026-05-09
 ```
 
 This keeps the original evidence reproducible while giving a clean-conditioned benchmark for trigger-only ASR.
@@ -32,7 +32,7 @@ This keeps the original evidence reproducible while giving a clean-conditioned b
 Per project cleanup, the same non-detox-reference rows were also moved out of the active corrected benchmark root:
 
 ```text
-D:\clean_yolo\poison_benchmark_cuda_tuned_remap_v2
+D:\clean_yolo\datasets\poison_benchmark_cuda_tuned_remap_v2
 ```
 
 They were moved to quarantine instead of being irreversibly removed:
@@ -45,7 +45,7 @@ Quarantine manifest:
 
 ```text
 D:\clean_yolo\model_security_gate\runs\failure_cause_clean_vs_attack_2026-05-09\non_detox_reference_quarantine_manifest.json
-D:\clean_yolo\poison_benchmark_cuda_tuned_remap_v2\non_detox_reference_quarantine_manifest_2026-05-09.json
+D:\clean_yolo\datasets\poison_benchmark_cuda_tuned_remap_v2\non_detox_reference_quarantine_manifest_2026-05-09.json
 ```
 
 The source clean images were not touched.
@@ -89,7 +89,7 @@ Removed failure rows:
 Manifest:
 
 ```text
-D:\clean_yolo\poison_benchmark_cuda_tuned_remap_v2_trigger_only_2026-05-09\filter_manifest_trigger_only_2026-05-09.json
+D:\clean_yolo\datasets\poison_benchmark_cuda_tuned_remap_v2_trigger_only_2026-05-09\filter_manifest_trigger_only_2026-05-09.json
 D:\clean_yolo\model_security_gate\runs\failure_cause_clean_vs_attack_2026-05-09\trigger_only_filter_manifest.json
 ```
 

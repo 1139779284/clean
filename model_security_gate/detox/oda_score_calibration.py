@@ -228,30 +228,6 @@ def oda_score_calibration_loss(
     return torch.stack(losses).mean()
 
 
-def target_absent_score_guard_loss(
-    prediction: Any,
-    batch: Dict[str, Any],
-    target_class_ids: Sequence[int],
-    *,
-    topk: int = 256,
-    weight: float = 1.0,
-) -> torch.Tensor:
-    """Optional OGA guard for target-absent anchors.
-
-    Kept separate from ``oda_score_calibration_loss`` so the first overfit smoke
-    can run with zero OGA pressure. When enabled, this only suppresses target
-    scores on images with no target labels.
-    """
-    pred = _extract_prediction(prediction)
-    if pred is None:
-        return _zero_from_prediction(prediction, batch)
-    # Reuse the established implementation for target-absent negative-only
-    # suppression. Import lazily to keep this module focused.
-    from model_security_gate.detox.oda_loss_v2 import negative_target_candidate_suppression_loss
-
-    return negative_target_candidate_suppression_loss(pred, batch, target_class_ids, topk=topk, weight=weight)
-
-
 def semantic_negative_guard_loss(
     prediction: Any,
     batch: Dict[str, Any],

@@ -78,11 +78,14 @@ class ASRClosedLoopConfig:
     stop_on_pass: bool = True
     external_failure_replay: bool = True
     external_failure_replay_repeat: int = 4
+    external_replay_floor_per_attack: int = 0  # if > 0 and failure_only=True, still replay at least this many real samples
     external_oda_full_image_extra_repeat: int = 0
     external_oda_focus_crops: bool = False
     external_oda_focus_crop_repeat: int = 2
     external_oda_focus_crop_context: float = 3.0
     external_oda_focus_crop_min_size: int = 160
+    # Patch G: blacklist stems for OGA negative training.
+    blacklist_stems: Sequence[str] = field(default_factory=tuple)
 
 
 def _eval_clean_yolo(model_path: str | Path, data_yaml: str | Path, imgsz: int, batch: int, device: str | int | None = None) -> Dict[str, Any] | None:
@@ -195,6 +198,35 @@ def _build_phase_plan(
         selected = [s for s in specs if s.name in top_names]
         if not selected and not hard_scores:
             selected = specs
+        # Always include ODA hardening when *any* ODA attack is observed,
+        # even below ``top_k_attacks_per_cycle`` / ``active_asr_threshold``.
+        # Dropping ODA causes a documented regression: OGA target-absent
+        # training generalises "trigger + no GT helmet -> suppress" to
+        # "trigger + any helmet context -> suppress", turning high-confidence
+        # recalled helmets into zero-confidence misses on badnet_oda-style
+        # images.  See docs/BADNET_ODA_REGRESSION_2026-05-10.md.
+        if not selected and group_name == "oda" and specs:
+            has_oda_signal = any(
+                score_for_attack_name(hard_scores, s.name, kind=s.kind, goal=s.goal) > 0.0
+                for s in specs
+            )
+            if has_oda_signal or not hard_scores:
+                selected = specs
+        # Fix F2: Always include WaNet hardening when OGA is scheduled.
+        # OGA-only training pushes the model to suppress patch-bearing
+        # negatives, which generalises to WaNet-warped images because both
+        # share the "unexpected visual perturbation → suppress target" pathway.
+        # Running WaNet immediately after OGA counteracts this by teaching
+        # the model that geometric warps are non-causal for target presence.
+        # See docs/V3_ABLATION_RESULTS_2026-05-11.md for the concrete failure.
+        if not selected and group_name == "wanet" and specs:
+            oga_scheduled = any(p.name == "oga_hardening" for p in phases)
+            has_wanet_signal = any(
+                score_for_attack_name(hard_scores, s.name, kind=s.kind, goal=s.goal) > 0.0
+                for s in specs
+            )
+            if oga_scheduled or has_wanet_signal or not hard_scores:
+                selected = specs
         if not selected:
             continue
         group_score = max([score_for_attack_name(hard_scores, s.name, kind=s.kind, goal=s.goal) for s in selected] + [0.0])
@@ -266,6 +298,7 @@ def _build_phase_dataset(
             max_images=cfg.max_images,
             target_class_ids=target_ids,
             attacks=list(phase.attacks),
+            blacklist_stems=list(cfg.blacklist_stems or []),
         ),
     )
     replay_stats: Dict[str, Any] = {"added": 0, "skipped": 0, "by_attack": {}}
@@ -287,6 +320,43 @@ def _build_phase_dataset(
             oda_focus_crop_context=float(getattr(cfg, "external_oda_focus_crop_context", 3.0)),
             oda_focus_crop_min_size=int(getattr(cfg, "external_oda_focus_crop_min_size", 160)),
         )
+        # Patch B: when failure_only shrinks the replay (because the defended
+        # model recovered some attacks), top up with a baseline replay so each
+        # attack always contributes at least ``external_replay_floor_per_attack``
+        # real samples.  This prevents the phase dataset from being dominated
+        # by synthetic attacks when the failure list is small.
+        if (
+            bool(cfg.external_failure_replay)
+            and int(getattr(cfg, "external_replay_floor_per_attack", 0)) > 0
+        ):
+            floor_stats = append_external_replay_samples(
+                output_dataset_dir=phase_dir,
+                attack_datasets=replay_datasets,
+                target_class_ids=target_ids,
+                selected_attack_names=[a.name for a in phase.attacks],
+                max_images_per_attack=int(cfg.external_replay_floor_per_attack),
+                split="train",
+                seed=cfg.seed + cycle,
+                failure_rows=None,
+                failure_only=False,
+                repeat=1,
+                oda_full_image_extra_repeat=int(getattr(cfg, "external_oda_full_image_extra_repeat", 0)),
+                oda_focus_crops=bool(getattr(cfg, "external_oda_focus_crops", False)),
+                oda_focus_crop_repeat=int(getattr(cfg, "external_oda_focus_crop_repeat", 2)),
+                oda_focus_crop_context=float(getattr(cfg, "external_oda_focus_crop_context", 3.0)),
+                oda_focus_crop_min_size=int(getattr(cfg, "external_oda_focus_crop_min_size", 160)),
+            )
+            merged_by_attack = dict(replay_stats.get("by_attack") or {})
+            for k, v in dict(floor_stats.get("by_attack") or {}).items():
+                merged_by_attack[k] = int(merged_by_attack.get(k, 0)) + int(v)
+            replay_stats = {
+                **replay_stats,
+                "added": int(replay_stats.get("added", 0)) + int(floor_stats.get("added", 0)),
+                "skipped": int(replay_stats.get("skipped", 0)) + int(floor_stats.get("skipped", 0)),
+                "by_attack": merged_by_attack,
+                "floor_stats": floor_stats,
+                "external_replay_floor_per_attack": int(cfg.external_replay_floor_per_attack),
+            }
     write_json(phase_dir / "phase_manifest.json", {"phase": asdict(phase), "replay_stats": replay_stats, "data_yaml": str(yaml_path)})
     return yaml_path
 

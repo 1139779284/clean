@@ -17,6 +17,11 @@ from model_security_gate.detox.asr_closed_loop_train import (
     _selection_score,
 )
 from model_security_gate.detox.external_hard_suite import ExternalHardSuiteConfig, discover_external_attack_datasets
+from model_security_gate.detox.multi_attack_constraints import (
+    AttackConstraint,
+    MultiAttackLagrangianController,
+    default_t0_constraints,
+)
 from model_security_gate.detox.strong_train import StrongDetoxConfig as FeatureStrongDetoxConfig
 from model_security_gate.detox.strong_train import run_strong_detox_training
 from model_security_gate.detox.train_ultralytics import train_counterfactual_finetune
@@ -62,11 +67,16 @@ class HybridPurifyConfig:
     external_oda_success_mode: str = "localized_any_recalled"
     external_failure_replay: bool = True
     external_failure_replay_repeat: int = 4
+    external_replay_floor_per_attack: int = 80
     external_oda_full_image_extra_repeat: int = 0
     external_oda_focus_crops: bool = False
     external_oda_focus_crop_repeat: int = 2
     external_oda_focus_crop_context: float = 3.0
     external_oda_focus_crop_min_size: int = 160
+
+    # Patch G: path to head_only_blacklist.json or direct list of stems.
+    head_only_blacklist: str | None = None
+    blacklist_stems: Sequence[str] = field(default_factory=tuple)
 
     # Phase schedule. Keep phases short; selection is external-ASR driven.
     phase_epochs: int = 2
@@ -92,6 +102,27 @@ class HybridPurifyConfig:
     use_external_replay: bool = True
     include_internal_asr: bool = True
     stop_on_pass: bool = True
+    # Fix F1: minimum number of per-attack samples required before the
+    # outer loop is allowed to declare "passed" and early-exit.  When each
+    # attack's eval sample size is below this, a point-estimate max ASR
+    # under the threshold is not enough evidence because the Wilson 95%
+    # upper bound can span well above ``max_allowed_external_asr``.
+    # Empirically, 60 images/attack yields +-6% CI width which is too wide
+    # for a 10% threshold; 120 images/attack cuts that to +-4% which is
+    # safe.  Default stays at 0 (off) for backward compatibility; the
+    # ablation configs opt in at 120.
+    min_passing_eval_n_per_attack: int = 0
+    # Patch D: global scale applied on top of the phase-wise
+    # ``lambda_output_distill`` values.  Use 0.0 to fully disable output
+    # distillation when the teacher is imperfect (e.g. a 3-epoch clean
+    # teacher that may wrongly call a sinusoidal blend pattern "helmet").
+    # Feature distillation and NAD attention are unaffected; the teacher
+    # still provides trustworthy intermediate features while its final
+    # decisions are ignored.  Default 1.0 preserves the original behaviour.
+    output_distill_scale: float = 1.0
+    # Patch D symmetric knob.  Keeps the feature-layer distillation signal
+    # fully on (1.0) even when output distill is off.
+    feature_distill_scale: float = 1.0
     run_feature_purifier: bool = True
     allow_self_teacher_feature_purifier: bool = False
     run_phase_finetune: bool = True
@@ -153,6 +184,24 @@ class HybridPurifyConfig:
     min_selection_improvement: float = 0.005
     min_external_asr_improvement: float = 1e-6
     min_external_mean_improvement: float = 0.01
+
+    # Lagrangian multi-attack controller (opt-in).
+    #
+    # When enabled, the Hybrid-PURIFY cycle loop feeds every cycle's external
+    # per-attack ASR into a MultiAttackLagrangianController and multiplies each
+    # phase's loss weights by the current per-attack lambda.  This keeps the
+    # training constrained-optimization aware of per-attack violation levels
+    # instead of relying on a static ``aggressive_mode`` boolean.  Default is
+    # off so every current run is bit-for-bit identical unless the user opts
+    # in via config.
+    use_lagrangian_controller: bool = False
+    lagrangian_lambda_lr: float = 0.25
+    lagrangian_lambda_min: float = 0.0
+    lagrangian_lambda_max: float = 6.0
+    lagrangian_decay: float = 0.98
+    lagrangian_base_scale: float = 1.0
+    lagrangian_max_scale: float = 4.0
+    lagrangian_min_scale: float = 0.5
 
     attack_specs: Sequence[AttackTransformConfig] = field(default_factory=lambda: default_attack_suite())
 
@@ -241,18 +290,18 @@ def _phase_feature_weights(phase_name: str) -> Dict[str, float]:
         }
     if "oda" in low:
         return {
-            "lambda_task": 1.45,
+            "lambda_task": 0.85,            # was 1.45; task loss dominated recall before
             "lambda_adv": 0.25,
             "lambda_output_distill": 0.45,
-            "lambda_feature_distill": 0.45,
+            "lambda_feature_distill": 0.55, # slight boost
             "lambda_nad": 0.50,
-            "lambda_attention": 0.35,
+            "lambda_attention": 0.40,
             "lambda_prototype": 0.55,
-            "lambda_proto_suppress": 0.10,
-            "lambda_oda_recall": 1.0,
-            "lambda_oda_matched": 0.75,
+            "lambda_proto_suppress": 0.05,  # keep low to avoid ODA suppression
+            "lambda_oda_recall": 1.80,      # was 1.0, now 2x
+            "lambda_oda_matched": 1.20,     # was 0.75
             "lambda_oga_negative": 0.0,
-            "lambda_pgbd_paired": 0.45,
+            "lambda_pgbd_paired": 0.55,
         }
     if "semantic" in low:
         return {
@@ -301,6 +350,190 @@ def _phase_feature_weights(phase_name: str) -> Dict[str, float]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Lagrangian multi-attack controller wiring
+# ---------------------------------------------------------------------------
+#
+# The controller is intentionally constrained to a small, auditable set of
+# phase-level loss multipliers.  The training loop in ``strong_train.py``
+# already implements every loss term; the controller's job is only to decide
+# how strongly each per-attack family should be weighted in the next cycle
+# given the observed external ASR violation.
+#
+# Mapping attack -> phase:
+#   badnet_oga,   blend_oga  -> oga bucket (lambda_oga_negative, proto_suppress)
+#   badnet_oda,   wanet_oda  -> oda bucket (lambda_oda_recall, oda_matched)
+#   wanet_oga,    wanet_*    -> wanet bucket (lambda_pgbd_paired, pgbd proto)
+#   semantic_*               -> semantic bucket (lambda_pgbd_paired, proto_suppress)
+#   clean_map_drop           -> recovery bucket (lambda_output_distill)
+#
+# Phase lambda scale is ``base_scale + lambda * per_unit`` clamped to
+# ``[lagrangian_min_scale, lagrangian_max_scale]``.
+
+
+_ATTACK_TO_BUCKET: Dict[str, str] = {
+    "badnet_oga": "oga",
+    "badnet_oga_corner": "oga",
+    "blend_oga": "oga",
+    "semantic_cleanlabel": "semantic",
+    "semantic_green_cleanlabel": "semantic",
+    "semantic_fp_max_conf": "semantic",
+    "badnet_oda": "oda",
+    "wanet_oda": "oda",
+    "wanet_oga": "wanet",
+    "wanet_oga_corner": "wanet",
+    "clean_map_drop": "clean",
+}
+
+_BUCKET_LAMBDA_KEYS: Dict[str, tuple[str, ...]] = {
+    "oga": ("lambda_oga_negative", "lambda_proto_suppress", "lambda_pgbd_paired"),
+    "oda": ("lambda_oda_recall", "lambda_oda_matched", "lambda_attention"),
+    "wanet": ("lambda_pgbd_paired", "lambda_feature_distill", "lambda_nad"),
+    "semantic": ("lambda_pgbd_paired", "lambda_proto_suppress", "lambda_feature_distill"),
+    "clean": ("lambda_output_distill", "lambda_feature_distill", "lambda_nad"),
+}
+
+
+def _bucket_for_attack(name: str) -> str | None:
+    low = str(name).strip().lower()
+    if low in _ATTACK_TO_BUCKET:
+        return _ATTACK_TO_BUCKET[low]
+    for key, bucket in _ATTACK_TO_BUCKET.items():
+        if low.startswith(key) or key.startswith(low):
+            return bucket
+    return None
+
+
+def _build_lagrangian_controller(cfg: HybridPurifyConfig) -> MultiAttackLagrangianController:
+    """Construct the controller from ``default_t0_constraints`` + cfg knobs."""
+
+    base = default_t0_constraints()
+    constraints = [
+        AttackConstraint(
+            name=c.name,
+            metric=c.metric,
+            max_value=c.max_value,
+            baseline_value=c.baseline_value,
+            no_worse_epsilon=c.no_worse_epsilon,
+            weight=c.weight,
+            direction=c.direction,
+            hard=c.hard,
+        )
+        for c in base
+    ]
+    return MultiAttackLagrangianController(
+        constraints=constraints,
+        lambda_lr=float(cfg.lagrangian_lambda_lr),
+        lambda_min=float(cfg.lagrangian_lambda_min),
+        lambda_max=float(cfg.lagrangian_lambda_max),
+        decay=float(cfg.lagrangian_decay),
+    )
+
+
+def _bucket_scales_from_lambdas(lambdas: Mapping[str, float], cfg: HybridPurifyConfig) -> Dict[str, float]:
+    """Aggregate per-attack lambdas into per-bucket scale multipliers.
+
+    Each bucket's scale is ``base_scale + mean(bucket_lambdas)/lambda_max``
+    times the base range, clamped to ``[min_scale, max_scale]``.
+    """
+
+    lmax = max(1e-6, float(cfg.lagrangian_lambda_max))
+    buckets: Dict[str, list[float]] = {}
+    for name, value in (lambdas or {}).items():
+        bucket = _bucket_for_attack(str(name))
+        if bucket is None:
+            continue
+        buckets.setdefault(bucket, []).append(float(value))
+    scales: Dict[str, float] = {}
+    for bucket, values in buckets.items():
+        norm = (sum(values) / len(values)) / lmax if values else 0.0
+        raw = float(cfg.lagrangian_base_scale) + norm * (
+            float(cfg.lagrangian_max_scale) - float(cfg.lagrangian_base_scale)
+        )
+        scales[bucket] = max(
+            float(cfg.lagrangian_min_scale),
+            min(float(cfg.lagrangian_max_scale), raw),
+        )
+    return scales
+
+
+def _apply_lagrangian_weights(
+    base: Mapping[str, float],
+    phase_name: str,
+    lambdas: Mapping[str, float] | None,
+    cfg: HybridPurifyConfig,
+) -> Dict[str, float]:
+    """Scale the phase's lambda_* entries by the controller's per-bucket scale.
+
+    Only lambda keys listed in the active bucket are scaled.  Other keys are
+    passed through unchanged so unrelated losses (e.g. lambda_task) keep the
+    weights designed for each phase.
+    """
+
+    out = {k: float(v) for k, v in base.items()}
+    if not lambdas:
+        return out
+    scales = _bucket_scales_from_lambdas(lambdas, cfg)
+    if not scales:
+        return out
+    low = str(phase_name).lower()
+    active: list[str] = []
+    if "oga" in low:
+        active.append("oga")
+    if "oda" in low:
+        active.append("oda")
+    if "wanet" in low or "warp" in low:
+        active.append("wanet")
+    if "semantic" in low:
+        active.append("semantic")
+    if "clean" in low or "recovery" in low:
+        active.append("clean")
+    if not active:
+        return out
+    for bucket in active:
+        scale = scales.get(bucket)
+        if scale is None:
+            continue
+        for key in _BUCKET_LAMBDA_KEYS.get(bucket, ()):
+            if key in out:
+                out[key] = float(out[key]) * float(scale)
+    return out
+
+
+def _normalize_metric_keys(metrics: Mapping[str, float]) -> Dict[str, float]:
+    """Normalize external ASR matrix keys for controller consumption.
+
+    External hard-suite reports typically name keys as ``suite::attack``.
+    The controller's default constraints are keyed by attack name only.  We
+    strip any ``suite::`` prefix and merge duplicates by taking the max.
+    Some local suites include provenance suffixes in the attack name
+    (for example ``badnet_oga_mask_bd_v2_visible``); those should still
+    drive the canonical ``badnet_oga`` controller constraint.
+    """
+
+    out: Dict[str, float] = {}
+    aliases = (
+        "badnet_oda",
+        "badnet_oga",
+        "blend_oga",
+        "wanet_oga",
+        "wanet_oda",
+        "semantic_cleanlabel",
+        "semantic_fp_max_conf",
+    )
+    for key, value in (metrics or {}).items():
+        name = str(key).split("::")[-1].strip().lower()
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        out[name] = max(out.get(name, 0.0), numeric)
+        for alias in aliases:
+            if alias in name:
+                out[alias] = max(out.get(alias, 0.0), numeric)
+    return out
+
+
 def _run_feature_purifier_phase(
     model: str | Path,
     teacher_model: str | Path | None,
@@ -309,6 +542,7 @@ def _run_feature_purifier_phase(
     target_ids: Sequence[int],
     phase_name: str,
     cfg: HybridPurifyConfig,
+    lagrangian_lambdas: Mapping[str, float] | None = None,
 ) -> Dict[str, Any]:
     weights = _phase_feature_weights(phase_name)
     phase_low = phase_name.lower()
@@ -352,6 +586,34 @@ def _run_feature_purifier_phase(
     lr = float(cfg.recovery_lr if "clean" in phase_low or "recovery" in phase_low else cfg.lr)
     if aggressive:
         lr *= float(cfg.aggressive_lr_multiplier)
+
+    # Apply adaptive Lagrangian per-bucket scaling on top of the static and
+    # aggressive weights.  This is a no-op when ``lagrangian_lambdas`` is None
+    # or empty, which keeps backward compatibility for existing callers.
+    pre_lagrangian_weights = dict(weights)
+    weights = _apply_lagrangian_weights(weights, phase_name, lagrangian_lambdas, cfg)
+
+    # Patch D: apply teacher-side scales.  When the teacher's decisions are
+    # not trusted (e.g. a lightly-finetuned clean teacher may hallucinate
+    # helmet on blend-pattern backgrounds), setting ``output_distill_scale=0``
+    # disables output-level distillation while keeping feature-level signals.
+    if "lambda_output_distill" in weights:
+        weights["lambda_output_distill"] = float(weights["lambda_output_distill"]) * float(cfg.output_distill_scale)
+    if "lambda_feature_distill" in weights:
+        weights["lambda_feature_distill"] = float(weights["lambda_feature_distill"]) * float(cfg.feature_distill_scale)
+
+    # Patch E: pick a PGBD paired-view mode that matches the current phase
+    # instead of using a single global "mixed" mode for every phase.  The
+    # default is a phase-inferred mode; if the caller explicitly set a
+    # non-default ``pgbd_view_mode`` we honor it unchanged.
+    from model_security_gate.detox.pgbd_od import infer_pgbd_mode_from_phase
+
+    base_pgbd_mode = str(cfg.pgbd_view_mode or "mixed")
+    if base_pgbd_mode.lower() in {"auto", "mixed"}:
+        pgbd_view_mode = infer_pgbd_mode_from_phase(phase_name, default=base_pgbd_mode)
+    else:
+        pgbd_view_mode = base_pgbd_mode
+
     fcfg = FeatureStrongDetoxConfig(
         model=str(model),
         data_yaml=str(data_yaml),
@@ -385,7 +647,7 @@ def _run_feature_purifier_phase(
         oda_matched_best_box_weight=float(cfg.oda_matched_best_box_weight),
         oda_matched_localized_margin=float(cfg.oda_matched_localized_margin),
         oda_matched_localized_margin_weight=float(cfg.oda_matched_localized_margin_weight),
-        pgbd_view_mode=str(cfg.pgbd_view_mode),
+        pgbd_view_mode=str(pgbd_view_mode),
         pgbd_negative_margin=float(cfg.pgbd_negative_margin),
         save_every=1 if cfg.external_select_phase_checkpoints else max(1, epochs),
         **weights,
@@ -408,7 +670,16 @@ def _run_feature_purifier_phase(
         seen.add(key)
         unique.append(path)
     primary = Path(report.get("final_model") or report.get("best_model") or unique[-1])
-    return {"primary_model": str(primary), "candidates": [str(path) for path in unique], "report": report, "aggressive": aggressive}
+    return {
+        "primary_model": str(primary),
+        "candidates": [str(path) for path in unique],
+        "report": report,
+        "aggressive": aggressive,
+        "weights": dict(weights),
+        "weights_pre_lagrangian": pre_lagrangian_weights,
+        "lagrangian_lambdas": {str(k): float(v) for k, v in (lagrangian_lambdas or {}).items()},
+        "pgbd_view_mode": str(pgbd_view_mode),
+    }
 
 
 def _run_clean_recovery_finetune(
@@ -418,10 +689,16 @@ def _run_clean_recovery_finetune(
     cfg: HybridPurifyConfig,
     epochs: int | None = None,
 ) -> Path:
+    # Ultralytics interprets a relative ``project`` path under its own
+    # ``runs/detect/`` root, which would cause ``find_ultralytics_weight`` to
+    # look in the wrong place.  Force an absolute path so downstream lookups
+    # agree on a single directory.
+    out_project_abs = Path(out_project).resolve()
+    out_project_abs.mkdir(parents=True, exist_ok=True)
     train_counterfactual_finetune(
         base_model=model,
         data_yaml=data_yaml,
-        output_project=out_project,
+        output_project=out_project_abs,
         name="clean_recovery",
         imgsz=cfg.imgsz,
         epochs=max(1, int(epochs if epochs is not None else cfg.recovery_epochs)),
@@ -439,7 +716,7 @@ def _run_clean_recovery_finetune(
         label_smoothing=0.03,
         close_mosaic=1,
     )
-    return find_ultralytics_weight(out_project, "clean_recovery", prefer="best")
+    return find_ultralytics_weight(out_project_abs, "clean_recovery", prefer="best")
 
 
 def _run_phase_finetune(
@@ -449,23 +726,48 @@ def _run_phase_finetune(
     cfg: HybridPurifyConfig,
     phase_name: str,
     epochs: int | None = None,
+    lagrangian_lambdas: Mapping[str, float] | None = None,
 ) -> List[Path]:
     """Run a supervised YOLO fine-tune on the current hardening phase dataset.
 
     This is the safe fallback when no trusted clean teacher is available. The
     phase dataset already contains failure-only external replay samples, and the
     outer loop still decides by external ASR / clean mAP rather than train loss.
+
+    When ``lagrangian_lambdas`` is provided, the phase's base learning rate is
+    scaled by the square root of the per-bucket scale from the Lagrangian
+    controller (clamped to ``[lagrangian_min_scale, lagrangian_max_scale]``).
+    Using sqrt keeps the lr change moderate relative to the bucket scale used
+    for loss weights, which matters for Ultralytics' built-in optimiser stability.
     """
+    # Same absolute-path fix as _run_clean_recovery_finetune: Ultralytics
+    # otherwise interprets a relative ``project`` under ``runs/detect/`` and
+    # ``find_ultralytics_weight`` ends up searching the wrong tree.
+    out_project_abs = Path(out_project).resolve()
+    out_project_abs.mkdir(parents=True, exist_ok=True)
+    lr0 = float(cfg.lr) * float(cfg.aggressive_lr_multiplier if cfg.aggressive_mode else 1.0)
+    if lagrangian_lambdas:
+        scales = _bucket_scales_from_lambdas(lagrangian_lambdas, cfg)
+        low = phase_name.lower()
+        active_scales = []
+        for bucket in ("oga", "oda", "wanet", "semantic", "clean"):
+            if bucket in low or (bucket == "wanet" and "warp" in low):
+                if bucket in scales:
+                    active_scales.append(scales[bucket])
+        if active_scales:
+            # sqrt to avoid dramatic lr shifts; still preserves the ordering.
+            mean_scale = sum(active_scales) / len(active_scales)
+            lr0 = lr0 * (mean_scale ** 0.5)
     train_counterfactual_finetune(
         base_model=model,
         data_yaml=data_yaml,
-        output_project=out_project,
+        output_project=out_project_abs,
         name="phase_finetune",
         imgsz=cfg.imgsz,
         epochs=max(1, int(epochs if epochs is not None else cfg.phase_epochs)),
         batch=cfg.batch,
         device=cfg.device,
-        lr0=float(cfg.lr) * float(cfg.aggressive_lr_multiplier if cfg.aggressive_mode else 1.0),
+        lr0=lr0,
         weight_decay=cfg.weight_decay,
         mosaic=0.25 if "oda" in phase_name else 0.45,
         mixup=0.03 if "oda" in phase_name else 0.08,
@@ -478,11 +780,11 @@ def _run_phase_finetune(
         close_mosaic=1,
         workers=cfg.num_workers,
     )
-    weights_dir = Path(out_project) / "phase_finetune" / "weights"
+    weights_dir = Path(out_project_abs) / "phase_finetune" / "weights"
     candidates: List[Path] = []
     for prefer in ("best", "last"):
         try:
-            path = find_ultralytics_weight(out_project, "phase_finetune", prefer=prefer)
+            path = find_ultralytics_weight(out_project_abs, "phase_finetune", prefer=prefer)
         except FileNotFoundError:
             continue
         if path.exists() and path not in candidates:
@@ -506,6 +808,24 @@ def _passes(best: Mapping[str, Any], cfg: HybridPurifyConfig) -> bool:
             return False
     if bool(cfg.require_no_attack_worse) and int((best.get("asr_compare_to_baseline") or {}).get("n_worse", 0) or 0) > 0:
         return False
+    # Fix F1: refuse to declare "passed" when the underlying external
+    # evaluation is too small for its Wilson 95% upper bound to stay below
+    # ``max_allowed_external_asr``.  Concretely: if any tracked attack has
+    # ``n_rows < min_passing_eval_n_per_attack``, the small-sample CI could
+    # easily span above the threshold even if the point estimate is under,
+    # so early-exit would be unsafe.  See docs/V3_ABLATION_RESULTS_2026-05-11.md
+    # for the concrete failure this guard prevents (OGA-only early-exit
+    # on 60-image eval caused WaNet regression on the full 300-image eval).
+    min_n = int(getattr(cfg, "min_passing_eval_n_per_attack", 0) or 0)
+    if min_n > 0:
+        counts = best.get("external_attack_counts") or {}
+        if counts:
+            try:
+                min_observed = min(int(v) for v in counts.values() if v is not None)
+            except (TypeError, ValueError):
+                min_observed = None
+            if min_observed is not None and min_observed < min_n:
+                return False
     return True
 
 
@@ -705,6 +1025,13 @@ def run_hybrid_purify_detox_yolo(
         mean_int = _mean_asr(evals.get("internal"))
         drop = _map_drop(clean_before, evals.get("clean_metrics"))
         asr_compare = compare_asr_matrices(baseline_external_matrix, _asr_matrix(evals.get("external")), cfg.max_single_attack_asr_worsen)
+        # Fix F1: extract per-attack sample counts so _passes can refuse
+        # early-exit when the eval is too small for reliable CI.
+        external_attack_counts: Dict[str, int] = {}
+        top_attacks = ((evals.get("external") or {}).get("summary") or {}).get("top_attacks") or []
+        for ta in top_attacks:
+            if isinstance(ta, Mapping) and "attack" in ta and "n" in ta:
+                external_attack_counts[str(ta["attack"])] = int(ta["n"])
         return {
             "model": str(candidate_model),
             "external_max_asr": ext,
@@ -717,7 +1044,8 @@ def run_hybrid_purify_detox_yolo(
             "external_json": evals.get("external_json"),
             "internal_json": evals.get("internal_json"),
             "asr_compare_to_baseline": asr_compare,
-            "passes": _passes({"external_max_asr": ext, "internal_max_asr": inte, "map_drop": drop, "clean_metrics": evals.get("clean_metrics"), "asr_compare_to_baseline": asr_compare}, cfg),
+            "external_attack_counts": external_attack_counts,
+            "passes": _passes({"external_max_asr": ext, "internal_max_asr": inte, "map_drop": drop, "clean_metrics": evals.get("clean_metrics"), "asr_compare_to_baseline": asr_compare, "external_attack_counts": external_attack_counts}, cfg),
             "cycle_info": dict(cycle_info),
             "_evals": evals,
         }
@@ -804,6 +1132,31 @@ def run_hybrid_purify_detox_yolo(
             manifest["warnings"].append(f"RNP pre-prune candidate failed and was skipped: {exc}")
         write_json(output_dir / "hybrid_purify_manifest.json", manifest)
 
+    # Lagrangian controller initialization.
+    #
+    # When ``use_lagrangian_controller`` is True, we seed the controller with
+    # the baseline external ASR matrix so the first cycle already uses
+    # non-default lambdas for attacks that are currently violated.  When
+    # disabled, ``controller`` stays None and the training path is identical
+    # to the pre-Lagrangian behaviour.
+    controller: MultiAttackLagrangianController | None = None
+    if bool(cfg.use_lagrangian_controller):
+        controller = _build_lagrangian_controller(cfg)
+        seed_metrics = dict(baseline_external_matrix)
+        if clean_before is not None:
+            try:
+                seed_metrics["clean_map_drop"] = 0.0  # baseline has zero drop by definition
+            except Exception:
+                pass
+        controller.update(_normalize_metric_keys(seed_metrics))
+        manifest["lagrangian_controller"] = {
+            "enabled": True,
+            "config": controller.to_dict(),
+            "seed_metrics": seed_metrics,
+            "trace": [],
+        }
+        write_json(output_dir / "hybrid_purify_manifest.json", manifest)
+
     for cycle in range(1, int(cfg.cycles) + 1):
         current_model = accepted_model
         closed_cfg = ASRClosedLoopConfig(
@@ -826,11 +1179,13 @@ def run_hybrid_purify_detox_yolo(
             external_failure_replay_repeat=int(
                 cfg.aggressive_failure_replay_repeat if cfg.aggressive_mode else cfg.external_failure_replay_repeat
             ),
+            external_replay_floor_per_attack=int(cfg.external_replay_floor_per_attack),
             external_oda_full_image_extra_repeat=int(cfg.external_oda_full_image_extra_repeat),
             external_oda_focus_crops=bool(cfg.external_oda_focus_crops),
             external_oda_focus_crop_repeat=int(cfg.external_oda_focus_crop_repeat),
             external_oda_focus_crop_context=float(cfg.external_oda_focus_crop_context),
             external_oda_focus_crop_min_size=int(cfg.external_oda_focus_crop_min_size),
+            blacklist_stems=list(cfg.blacklist_stems or []),
             base_clean_repeat=cfg.base_clean_repeat,
             recovery_clean_repeat=cfg.recovery_clean_repeat,
             base_attack_repeat=cfg.base_attack_repeat,
@@ -867,6 +1222,7 @@ def run_hybrid_purify_detox_yolo(
             phase_dir = output_dir / f"02_cycle_{cycle:02d}_phase_{pi:02d}_{phase.name}"
             phase_entry: Dict[str, Any] = {"phase": asdict(phase), "data_yaml": str(phase_yaml), "evaluations": []}
             if feature_purifier_enabled:
+                current_lambdas = controller.lambdas if controller is not None else None
                 feature_result = _run_feature_purifier_phase(
                     model=current_model,
                     teacher_model=teacher_model,
@@ -875,11 +1231,15 @@ def run_hybrid_purify_detox_yolo(
                     target_ids=target_ids,
                     phase_name=phase.name,
                     cfg=cfg,
+                    lagrangian_lambdas=current_lambdas,
                 )
                 phase_entry["feature_purifier"] = {
                     "primary_model": feature_result.get("primary_model"),
                     "candidates": feature_result.get("candidates", []),
                     "aggressive": feature_result.get("aggressive"),
+                    "weights": feature_result.get("weights"),
+                    "weights_pre_lagrangian": feature_result.get("weights_pre_lagrangian"),
+                    "lagrangian_lambdas": feature_result.get("lagrangian_lambdas"),
                 }
                 current_model = Path(str(feature_result.get("primary_model")))
                 phase_entry["model_after_feature"] = str(current_model)
@@ -934,6 +1294,7 @@ def run_hybrid_purify_detox_yolo(
                     cfg=cfg,
                     phase_name=phase.name,
                     epochs=phase.epochs,
+                    lagrangian_lambdas=(controller.lambdas if controller is not None else None),
                 )
                 phase_entry["phase_finetune"] = {"candidates": [str(p) for p in phase_candidates]}
                 if cfg.evaluate_each_phase:
@@ -1029,6 +1390,30 @@ def run_hybrid_purify_detox_yolo(
         if should_rollback:
             current_model = accepted_model
         manifest["cycles"].append(public_item)
+
+        # Feed observed per-attack ASR into the controller so the next cycle's
+        # lambda weights reflect current violation levels.
+        if controller is not None:
+            cycle_matrix = _asr_matrix(evals.get("external"))
+            metric_inputs = _normalize_metric_keys(cycle_matrix)
+            try:
+                metric_inputs["clean_map_drop"] = float(public_item.get("map_drop", 0.0))
+            except (TypeError, ValueError):
+                pass
+            trace_row = controller.update(metric_inputs)
+            manifest.setdefault(
+                "lagrangian_controller",
+                {"enabled": True, "config": controller.to_dict(), "trace": []},
+            )
+            manifest["lagrangian_controller"]["trace"].append(
+                {
+                    "cycle": cycle,
+                    "metrics": metric_inputs,
+                    "lambdas": dict(controller.lambdas),
+                    "updates": trace_row,
+                }
+            )
+
         write_json(output_dir / "hybrid_purify_manifest.json", manifest)
         if best_item.get("passes") and cfg.stop_on_pass:
             manifest["status"] = "passed_early"
