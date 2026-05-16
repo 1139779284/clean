@@ -90,6 +90,25 @@ def test_candidate_improved_clean_map_preference_requires_passing_candidate():
     assert not _candidate_improved(candidate, best, cfg)
 
 
+def test_candidate_improved_never_replaces_passing_best_with_failing_candidate():
+    cfg = HybridPurifyConfig(min_external_asr_improvement=0.001)
+    best = {
+        "passes": True,
+        "selection_score": 0.09,
+        "external_max_asr": 0.05,
+        "external_mean_asr": 0.05,
+        "map_drop": 0.038,
+    }
+    candidate = {
+        "passes": False,
+        "selection_score": 0.04,
+        "external_max_asr": 0.02,
+        "external_mean_asr": 0.02,
+        "map_drop": 0.052,
+    }
+    assert not _candidate_improved(candidate, best, cfg)
+
+
 def test_candidate_block_reasons_report_map_and_attack_failures():
     cfg = HybridPurifyConfig(max_map_drop=0.03)
     item = {

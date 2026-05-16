@@ -870,6 +870,8 @@ def _candidate_improved(item: Mapping[str, Any], best_item: Mapping[str, Any], c
         return False
 
     max_eps = max(float(cfg.min_external_asr_improvement), 1e-9)
+    if bool(best_item.get("passes")) and not bool(item.get("passes")):
+        return False
     if bool(cfg.prefer_passing_clean_map) and bool(item.get("passes")) and bool(best_item.get("passes")):
         try:
             best_drop = float(best_item.get("map_drop"))
