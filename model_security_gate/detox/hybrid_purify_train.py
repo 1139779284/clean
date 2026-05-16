@@ -186,6 +186,7 @@ class HybridPurifyConfig:
     min_selection_improvement: float = 0.005
     min_external_asr_improvement: float = 1e-6
     min_external_mean_improvement: float = 0.01
+    prefer_passing_clean_map: bool = False
 
     # Lagrangian multi-attack controller (opt-in).
     #
@@ -869,6 +870,19 @@ def _candidate_improved(item: Mapping[str, Any], best_item: Mapping[str, Any], c
         return False
 
     max_eps = max(float(cfg.min_external_asr_improvement), 1e-9)
+    if bool(cfg.prefer_passing_clean_map) and bool(item.get("passes")) and bool(best_item.get("passes")):
+        try:
+            best_drop = float(best_item.get("map_drop"))
+            item_drop = float(item.get("map_drop"))
+        except (TypeError, ValueError):
+            best_drop = item_drop = None
+        if best_drop is not None and item_drop is not None:
+            map_eps = max(float(cfg.min_selection_improvement), 1e-9)
+            if best_drop - item_drop > map_eps:
+                return True
+            if item_drop - best_drop > map_eps:
+                return False
+
     if item_max > best_max + max_eps:
         return False
     if best_max - item_max > max_eps:

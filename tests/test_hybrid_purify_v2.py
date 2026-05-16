@@ -54,6 +54,42 @@ def test_candidate_improved_rejects_higher_external_max_even_with_better_score()
     assert not _candidate_improved(candidate, best, cfg)
 
 
+def test_candidate_improved_can_prefer_clean_map_among_passing_candidates():
+    cfg = HybridPurifyConfig(
+        prefer_passing_clean_map=True,
+        min_selection_improvement=0.005,
+        min_external_asr_improvement=0.001,
+    )
+    best = {
+        "passes": True,
+        "selection_score": 0.0,
+        "external_max_asr": 0.0,
+        "external_mean_asr": 0.0,
+        "map_drop": 0.050,
+    }
+    candidate = {
+        "passes": True,
+        "selection_score": 0.12,
+        "external_max_asr": 0.07,
+        "external_mean_asr": 0.07,
+        "map_drop": 0.037,
+    }
+    assert _candidate_improved(candidate, best, cfg)
+
+
+def test_candidate_improved_clean_map_preference_requires_passing_candidate():
+    cfg = HybridPurifyConfig(prefer_passing_clean_map=True)
+    best = {"passes": True, "selection_score": 0.0, "external_max_asr": 0.0, "external_mean_asr": 0.0, "map_drop": 0.050}
+    candidate = {
+        "passes": False,
+        "selection_score": 0.12,
+        "external_max_asr": 0.07,
+        "external_mean_asr": 0.07,
+        "map_drop": 0.037,
+    }
+    assert not _candidate_improved(candidate, best, cfg)
+
+
 def test_candidate_block_reasons_report_map_and_attack_failures():
     cfg = HybridPurifyConfig(max_map_drop=0.03)
     item = {

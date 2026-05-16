@@ -117,6 +117,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--external-mean-asr-weight", type=float, default=None)
     p.add_argument("--min-external-asr-improvement", type=float, default=None)
     p.add_argument("--min-external-mean-improvement", type=float, default=None)
+    p.add_argument("--prefer-passing-clean-map", action="store_true", default=None,
+                   help="When both candidates pass ASR/mAP gates, prefer lower clean mAP drop over lower ASR.")
 
     # Lagrangian multi-attack controller (opt-in, main-line algorithmic extension).
     p.add_argument(
@@ -167,6 +169,7 @@ def _resolved(args: argparse.Namespace) -> dict:
         "no_pre_prune": ("run_pre_prune", False),
         "no_stop_on_pass": ("stop_on_pass", False),
         "allow_attack_worse": ("require_no_attack_worse", False),
+        "prefer_passing_clean_map": ("prefer_passing_clean_map", True),
     }
     norm = {}
     for k, v in cli.items():
