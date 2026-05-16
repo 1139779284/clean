@@ -18,6 +18,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e . --no-deps
           python -m pip install pytest PyYAML pandas numpy opencv-python-headless pillow tqdm matplotlib
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Static compile
         run: python -m compileall -q model_security_gate scripts tests
       - name: Pytest
