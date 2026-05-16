@@ -290,6 +290,12 @@ mAP drop 4.970 pp，`hybrid_purify_manifest.json` 状态为 `passed`，final mod
 clean mAP50-95 drop 4.970 pp 超过 3 pp 容差；但 reduction path 极强（CMR=0.9286，
 Holm p=9.095e-13）。
 
+从 aggressive checkpoint 出发的 guarded clean recovery 也已试跑：
+baseline ASR 保持 0.000%，但 clean_anchor recovery 和 clean_recovery recovery
+都会反弹到 40.476% ASR，门控回滚后 final model 仍是 aggressive checkpoint。
+因此 v2 下一步不是普通 clean-only recovery，而是 ASR-aware recovery：恢复 clean
+mAP 的同时继续保留 OGA replay / feature 约束。
+
 ---
 
 ## 📋 下一步最高价值工作
@@ -487,6 +493,7 @@ pixi run hybrid-purify-detox-yolo
 - **2026-05-16**：补充 v2 双周期 Lagrangian 净化结果；确认 v2 失败主因是恢复阶段反弹，不是最终模型指针错误
 - **2026-05-16**：新增 v2 no-recovery 消融；ASR 降至 14.286%，默认 CFRC reduction path 通过
 - **2026-05-16**：新增 v2 aggressive OGA hardening；ASR 降至 0.000%，通过 10% ASR / 5 pp mAP smoke gate
+- **2026-05-16**：验证 aggressive checkpoint 上普通 clean recovery 会反弹到 40.476% ASR，后续需要 ASR-aware recovery
 - **2026-05-10**：P0/P1/P2 详细进度更新，添加拉格朗日控制器和 CFRC
 - **2026-05-09**：校正套件净化状态，修复类别重映射问题
 - **2026-05-08**：完整算法升级和架构文档

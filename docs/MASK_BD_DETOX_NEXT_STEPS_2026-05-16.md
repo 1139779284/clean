@@ -171,6 +171,12 @@ aggressive best feature:        0.000% ASR
 aggressive mAP drop:            4.970 pp
 aggressive smoke status:        passed
 aggressive CFRC status:         uncertified; mAP drop > 3 pp
+
+guarded recovery from aggressive:
+  clean_anchor recovery ASR:     40.476%
+  clean_recovery recovery ASR:   40.476%
+  selected final model:          original aggressive checkpoint
+  result:                        no mAP recovery accepted
 ```
 
 Interpretation:
@@ -187,10 +193,12 @@ Interpretation:
 - Stronger OGA feature hardening closes the absolute-ASR gap completely on the
   smoke set, but costs clean mAP.  This changes the next algorithm task from
   "can we detox v2?" to "can we recover roughly 2 pp mAP without ASR rebound?"
+- Guarded clean-only recovery confirms that ordinary recovery is not enough:
+  it immediately rebounds ASR to 40.476% and is rolled back.  The next recovery
+  variant needs to keep OGA failure replay or feature constraints active while
+  restoring clean utility.
 
-Next run to schedule: guarded recovery from the aggressive checkpoint.  This
-starts from the 0% ASR model, disables new feature/phase hardening, and only
-allows clean recovery if the external ASR/mAP gates keep it from rebounding.
+Recovery-guard run already tested:
 
 ```powershell
 pixi run hybrid-purify-detox-yolo `
@@ -211,6 +219,11 @@ pixi run hybrid-purify-detox-yolo `
   --no-pre-prune --no-feature-purifier --no-phase-finetune --rollback-unimproved-phase `
   --external-replay-floor-per-attack 42 --output-distill-scale 0.0 --feature-distill-scale 1.0
 ```
+
+Next algorithm step: implement or configure **ASR-aware recovery**.  The clean
+utility step should train on clean data plus OGA external replay constraints,
+then select only candidates that keep ASR below the aggressive checkpoint's
+0-2.381% band while improving mAP50-95.
 
 ## Separation From Old Matrix
 
