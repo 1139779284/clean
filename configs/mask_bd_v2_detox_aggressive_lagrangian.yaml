@@ -1,0 +1,66 @@
+# Stronger OGA-hardening follow-up for the v2 visible-patch benchmark.
+#
+# The no-recovery ablation reached 14.286% ASR with only 2.211 pp mAP drop.
+# This run keeps the same no-phaseft/no-recovery-finetune guardrails and
+# increases only the OGA feature-purifier pressure, aiming to move the 42-image
+# smoke set from 6 triggered detections down to 4 or fewer.
+spec:
+  poisoned_model_id: mask_bd_v2_poisoned
+  poisoned_model_path: D:/clean_yolo/models/mask_bd_v2_poisoned.pt
+  teacher_model: D:/clean_yolo/models/mask_bd_v2_clean_baseline.pt
+  data_yaml: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/data.yaml
+  images: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/images/train
+  labels: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/labels/train
+  hybrid_config: configs/mask_bd_v2_hybrid_purify.yaml
+  target_classes:
+    - helmet
+  external_eval_roots:
+    - D:/clean_yolo/datasets/mask_bd_external_eval/badnet_oga_mask_bd_v2_visible
+  external_replay_roots:
+    - D:/clean_yolo/datasets/mask_bd_external_eval/badnet_oga_mask_bd_v2_visible
+  out_root: runs/mask_bd_v2_detox_aggressive_lagrangian_2026-05-16
+
+  imgsz: 416
+  batch: 8
+  cycles: 2
+  phase_epochs: 1
+  feature_epochs: 1
+  recovery_epochs: 1
+  device: "0"
+
+  max_images: 800
+  eval_max_images: 100
+  external_eval_max_images_per_attack: 42
+  external_replay_max_images_per_attack: 42
+
+  max_allowed_external_asr: 0.10
+  max_map_drop: 0.05
+  selection_max_map_drop: 0.08
+  no_pre_prune: true
+  extra_cli:
+    - "--no-stop-on-pass"
+    - "--no-phase-finetune"
+    - "--no-clean-recovery-finetune"
+    - "--aggressive-mode"
+    - "--aggressive-feature-epochs"
+    - "2"
+    - "--aggressive-failure-replay-repeat"
+    - "10"
+    - "--lagrangian-lambda-lr"
+    - "0.4"
+    - "--lagrangian-max-scale"
+    - "5.0"
+    - "--external-replay-floor-per-attack"
+    - "42"
+    - "--output-distill-scale"
+    - "0.0"
+    - "--feature-distill-scale"
+    - "1.0"
+
+  notes: >
+    v2 visible-patch OGA aggressive feature-purifier follow-up. This is scoped
+    to the remaining absolute ASR gap after the no-recovery CFRC pass.
+
+arms:
+  - name: lagrangian_aggressive
+    use_lagrangian_controller: true

@@ -15,6 +15,8 @@ T0 poison-model matrix.  The matrix remains the publication-scale contribution
   `model_security_gate/configs/mask_bd_v2_detox_2cycle_lagrangian.yaml`
 - v2 recovery-ablation config:
   `model_security_gate/configs/mask_bd_v2_detox_no_recovery_lagrangian.yaml`
+- v2 aggressive hardening config:
+  `model_security_gate/configs/mask_bd_v2_detox_aggressive_lagrangian.yaml`
 - Focused Hybrid-PURIFY attack configs:
   `model_security_gate/configs/mask_bd_v2_hybrid_purify.yaml`,
   `model_security_gate/configs/mask_bd_v3_sig_hybrid_purify.yaml`
@@ -114,6 +116,12 @@ v2 visible OGA recovery ablation:
   smoke gate: still failed because absolute ASR is above 10%
   run root: model_security_gate/runs/mask_bd_v2_detox_no_recovery_lagrangian_2026-05-16/
 
+v2 visible OGA aggressive hardening:
+  lagrangian_aggressive: 97.619% -> 0.000% ASR, mAP drop 4.970 pp
+  smoke gate: passed
+  CFRC: FAIL only because default clean mAP drop tolerance is 3 pp
+  run root: model_security_gate/runs/mask_bd_v2_detox_aggressive_lagrangian_2026-05-16/
+
 v3 SIG OGA:
   static_lambda:     69.048% -> 0.000% ASR, mAP drop 3.960 pp, passed
   lagrangian_lambda: 69.048% -> 0.000% ASR, mAP drop 3.974 pp, passed
@@ -138,9 +146,11 @@ Notes:
   follow-up reached 16.667% ASR, but phase finetune and clean recovery both
   rebound ASR sharply.  The final manifest correctly keeps the best feature
   purifier checkpoint.  The no-recovery ablation improves the best point to
-  14.286% ASR with only 2.211 pp mAP drop, so the next v2 work is no longer
-  about mAP recovery; it is about getting the OGA feature-hardening stage below
-  four triggered detections out of the 42-image smoke set.
+  14.286% ASR with only 2.211 pp mAP drop, and the aggressive hardening run
+  reaches 0.000% ASR with 4.970 pp mAP drop.  The next v2 work is now a
+  clean-utility recovery problem: keep aggressive ASR removal while moving
+  mAP drop from the smoke tolerance band back under the default 3 pp CFRC
+  tolerance.
 
 ## v2 Recovery Rebound Diagnosis
 
@@ -156,6 +166,11 @@ CFRC status:                   uncertified; mAP drop 5.701 pp
 no-recovery best feature:       14.286% ASR
 no-recovery mAP drop:           2.211 pp
 no-recovery CFRC status:        certified by reduction path
+
+aggressive best feature:        0.000% ASR
+aggressive mAP drop:            4.970 pp
+aggressive smoke status:        passed
+aggressive CFRC status:         uncertified; mAP drop > 3 pp
 ```
 
 Interpretation:
@@ -169,13 +184,18 @@ Interpretation:
   useful detox direction on v2.  Once recovery finetune is disabled, mAP is
   inside the default CFRC tolerance and the remaining gap is absolute ASR:
   14.286% means 6/42 triggered images still fire; the smoke pass needs 4/42.
+- Stronger OGA feature hardening closes the absolute-ASR gap completely on the
+  smoke set, but costs clean mAP.  This changes the next algorithm task from
+  "can we detox v2?" to "can we recover roughly 2 pp mAP without ASR rebound?"
 
-Next run to schedule:
+Next run to schedule: guarded recovery from the aggressive checkpoint.  This
+starts from the 0% ASR model, disables new feature/phase hardening, and only
+allows clean recovery if the external ASR/mAP gates keep it from rebounding.
 
 ```powershell
 pixi run hybrid-purify-detox-yolo `
   --config configs/mask_bd_v2_hybrid_purify.yaml `
-  --model D:/clean_yolo/models/mask_bd_v2_poisoned.pt `
+  --model runs/mask_bd_v2_detox_aggressive_lagrangian_2026-05-16/lagrangian_aggressive/02_cycle_01_phase_02_oga_hardening/feature_purify/last_strong_detox.pt `
   --teacher-model D:/clean_yolo/models/mask_bd_v2_clean_baseline.pt `
   --images D:/clean_yolo/datasets/helmet_head_yolo_train_remap/images/train `
   --labels D:/clean_yolo/datasets/helmet_head_yolo_train_remap/labels/train `
@@ -183,13 +203,12 @@ pixi run hybrid-purify-detox-yolo `
   --target-classes helmet `
   --external-eval-roots D:/clean_yolo/datasets/mask_bd_external_eval/badnet_oga_mask_bd_v2_visible `
   --external-replay-roots D:/clean_yolo/datasets/mask_bd_external_eval/badnet_oga_mask_bd_v2_visible `
-  --out runs/mask_bd_v2_detox_recovery_guard_2026-05-16 `
-  --imgsz 416 --batch 8 --cycles 2 --feature-epochs 1 --phase-epochs 1 --recovery-epochs 1 `
+  --out runs/mask_bd_v2_detox_aggressive_recovery_guard_2026-05-16 `
+  --imgsz 416 --batch 8 --cycles 1 --feature-epochs 1 --phase-epochs 1 --recovery-epochs 1 `
   --max-images 800 --eval-max-images 100 `
   --external-eval-max-images-per-attack 42 --external-replay-max-images-per-attack 42 `
   --max-allowed-external-asr 0.1 --max-map-drop 0.05 --selection-max-map-drop 0.08 `
-  --no-pre-prune --use-lagrangian-controller --no-stop-on-pass `
-  --no-phase-finetune --no-clean-recovery-finetune `
+  --no-pre-prune --no-feature-purifier --no-phase-finetune --rollback-unimproved-phase `
   --external-replay-floor-per-attack 42 --output-distill-scale 0.0 --feature-distill-scale 1.0
 ```
 
