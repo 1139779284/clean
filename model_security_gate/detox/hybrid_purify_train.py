@@ -127,6 +127,7 @@ class HybridPurifyConfig:
     allow_self_teacher_feature_purifier: bool = False
     run_phase_finetune: bool = True
     run_clean_recovery_finetune: bool = True
+    recovery_replay_external: bool = False
     trusted_teacher_required: bool = False
     evaluate_each_phase: bool = True
     rollback_bad_phase: bool = True
@@ -428,6 +429,16 @@ def _build_lagrangian_controller(cfg: HybridPurifyConfig) -> MultiAttackLagrangi
         lambda_max=float(cfg.lagrangian_lambda_max),
         decay=float(cfg.lagrangian_decay),
     )
+
+
+def _apply_recovery_replay_external(phases: Sequence[Any], enabled: bool) -> None:
+    """Optionally keep external replay constraints active during recovery phases."""
+
+    if not enabled:
+        return
+    for phase in phases:
+        if str(getattr(phase, "name", "")) in {"clean_anchor", "clean_recovery"}:
+            phase.replay_external = True
 
 
 def _bucket_scales_from_lambdas(lambdas: Mapping[str, float], cfg: HybridPurifyConfig) -> Dict[str, float]:
@@ -1203,6 +1214,7 @@ def run_hybrid_purify_detox_yolo(
             use_external_replay=cfg.use_external_replay,
         )
         phases = _build_phase_plan(cfg.attack_specs, accepted_hard_scores, closed_cfg)
+        _apply_recovery_replay_external(phases, bool(cfg.recovery_replay_external))
         cycle_info: Dict[str, Any] = {"cycle": cycle, "phases": [], "hard_scores_in": dict(accepted_hard_scores)}
         stop_after_phase = False
 

@@ -1,4 +1,12 @@
-from model_security_gate.detox.hybrid_purify_train import HybridPurifyConfig, compare_asr_matrices, _candidate_block_reasons, _candidate_improved, _hybrid_selection_score
+from model_security_gate.detox.asr_closed_loop_train import ClosedLoopPhase
+from model_security_gate.detox.hybrid_purify_train import (
+    HybridPurifyConfig,
+    _apply_recovery_replay_external,
+    _candidate_block_reasons,
+    _candidate_improved,
+    _hybrid_selection_score,
+    compare_asr_matrices,
+)
 from model_security_gate.detox.external_hard_suite import score_for_attack_name
 from model_security_gate.detox.rnp import RNPConfig
 
@@ -78,9 +86,28 @@ def test_phase_level_selection_defaults_are_safe():
     assert cfg.rollback_bad_phase is True
     assert cfg.external_failure_replay is True
     assert cfg.external_select_phase_checkpoints is True
+    assert cfg.recovery_replay_external is False
     assert cfg.aggressive_lambda_oda_recall > 0
     assert cfg.oda_recall_min_conf > 0
     assert cfg.oda_recall_loss_scale >= 1
+
+
+def test_recovery_replay_external_only_marks_clean_recovery_phases():
+    phases = [
+        ClosedLoopPhase(name="clean_anchor", replay_external=False),
+        ClosedLoopPhase(name="oga_hardening", replay_external=True),
+        ClosedLoopPhase(name="clean_recovery", replay_external=False),
+    ]
+    _apply_recovery_replay_external(phases, enabled=True)
+    assert phases[0].replay_external is True
+    assert phases[1].replay_external is True
+    assert phases[2].replay_external is True
+
+
+def test_recovery_replay_external_noop_when_disabled():
+    phases = [ClosedLoopPhase(name="clean_recovery", replay_external=False)]
+    _apply_recovery_replay_external(phases, enabled=False)
+    assert phases[0].replay_external is False
 
 
 def test_attack_score_matching_keeps_oga_and_oda_separate():

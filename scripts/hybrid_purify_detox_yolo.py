@@ -66,6 +66,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--allow-self-teacher-feature-purifier", action="store_true", default=None)
     p.add_argument("--no-phase-finetune", action="store_true", default=None)
     p.add_argument("--no-clean-recovery-finetune", action="store_true", default=None)
+    p.add_argument(
+        "--recovery-replay-external",
+        action="store_true",
+        default=None,
+        help="Replay external hard-suite samples during clean recovery phases to make recovery ASR-aware.",
+    )
     p.add_argument("--no-evaluate-each-phase", action="store_true", default=None, help="Disable phase-level external ASR checkpoint selection")
     p.add_argument("--no-rollback-bad-phase", action="store_true", default=None, help="Continue from a phase even if it worsens an external attack")
     p.add_argument("--rollback-unimproved-phase", action="store_true", default=None, help="Rollback phase candidates that do not improve external selection score")
@@ -148,6 +154,7 @@ def _resolved(args: argparse.Namespace) -> dict:
         "allow_self_teacher_feature_purifier": ("allow_self_teacher_feature_purifier", True),
         "no_phase_finetune": ("run_phase_finetune", False),
         "no_clean_recovery_finetune": ("run_clean_recovery_finetune", False),
+        "recovery_replay_external": ("recovery_replay_external", True),
         "no_evaluate_each_phase": ("evaluate_each_phase", False),
         "no_rollback_bad_phase": ("rollback_bad_phase", False),
         "rollback_unimproved_phase": ("rollback_unimproved_phase", True),
