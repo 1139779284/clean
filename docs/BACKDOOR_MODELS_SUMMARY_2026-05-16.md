@@ -199,10 +199,23 @@ triggered = apply_sig(img, delta=15, freq=6)
 | v2 visible OGA | 26.190% ASR, 4.233 pp mAP drop | 23.810% ASR, 4.428 pp mAP drop | 仍需强化，未过 10% ASR |
 | v3 SIG OGA | 0.000% ASR, 3.960 pp mAP drop | 0.000% ASR, 3.974 pp mAP drop | smoke 通过 |
 
+v2 后续强化实验（同日）：
+
+| 模型 | arm | ASR before | ASR best | mAP drop | 结论 |
+|---|---|---:|---:|---:|---|
+| v2 visible OGA | lagrangian_2cycle | 97.619% | 16.667% | 5.701 pp | ASR 继续下降，但仍未过 10% smoke；mAP drop 也略超 5 pp |
+
+诊断：`lagrangian_2cycle` 的最终模型正确指向最低 ASR 的 `feature_purify` 候选；
+当前失败不是“最终模型拿错”的简单实现 bug。问题主要暴露在 v2 的后续恢复阶段：
+OGA hardening 可把 ASR 压到 16.667%，但 phase finetune / clean recovery 会把外部 ASR
+推回 26.190% / 92.857%。下一步应测试禁用恢复微调、恢复阶段外部 ASR 保守回滚，或把
+recovery 约束改成“不允许破坏 OGA hardening”。
+
 对应产物：
 
 - `model_security_gate/runs/mask_bd_v2_detox_smoke_named_2026-05-16/`
 - `model_security_gate/runs/mask_bd_v3_sig_detox_smoke_named_2026-05-16/`
+- `model_security_gate/runs/mask_bd_v2_detox_2cycle_lagrangian_2026-05-16/`
 - `cfrc_certificate/` 子目录中有默认 CFRC 报告；当前 3 pp clean mAP 容差下仍未认证
 - `docs/MASK_BD_DETOX_NEXT_STEPS_2026-05-16.md`
 

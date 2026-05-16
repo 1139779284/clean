@@ -11,6 +11,8 @@ T0 poison-model matrix.  The matrix remains the publication-scale contribution
 - Loader-friendly external eval roots: `datasets/mask_bd_external_eval/`
 - Reproduction tools: `model_security_gate/tools/clean_label_mask/`
 - Detox smoke configs: `model_security_gate/configs/mask_bd_*_detox_smoke.yaml`
+- v2 focused follow-up config:
+  `model_security_gate/configs/mask_bd_v2_detox_2cycle_lagrangian.yaml`
 - Focused Hybrid-PURIFY attack configs:
   `model_security_gate/configs/mask_bd_v2_hybrid_purify.yaml`,
   `model_security_gate/configs/mask_bd_v3_sig_hybrid_purify.yaml`
@@ -100,6 +102,10 @@ v2 visible OGA:
   lagrangian_lambda: 97.619% -> 23.810% ASR, mAP drop 4.428 pp, failed threshold
   run root: model_security_gate/runs/mask_bd_v2_detox_smoke_named_2026-05-16/
 
+v2 visible OGA follow-up:
+  lagrangian_2cycle: 97.619% -> 16.667% ASR, mAP drop 5.701 pp, failed threshold
+  run root: model_security_gate/runs/mask_bd_v2_detox_2cycle_lagrangian_2026-05-16/
+
 v3 SIG OGA:
   static_lambda:     69.048% -> 0.000% ASR, mAP drop 3.960 pp, passed
   lagrangian_lambda: 69.048% -> 0.000% ASR, mAP drop 3.974 pp, passed
@@ -120,10 +126,57 @@ Notes:
   canonical controller constraints (`badnet_oga`, `blend_oga`).
 - v3 is immediately useful as the hidden-trigger detox benchmark: both arms
   reach zero external ASR under the smoke gate.
-- v2 remains the hard visible-trigger benchmark.  A previous multi-attack
-  context run reached 16.667% ASR, while the focused single-attack config
-  reached 23.810%; next v2 work should test multi-OGA context or a two-cycle
-  run instead of only the focused single-attack setting.
+- v2 remains the hard visible-trigger benchmark.  The two-cycle Lagrangian
+  follow-up reached 16.667% ASR, but phase finetune and clean recovery both
+  rebound ASR sharply.  The final manifest correctly keeps the best feature
+  purifier checkpoint, so the next v2 work is algorithmic: make recovery
+  conservative with external ASR rollback, or run a no-phaseft/no-recovery
+  variant before increasing cycles.
+
+## v2 Recovery Rebound Diagnosis
+
+The two-cycle follow-up separates leverage from failure:
+
+```text
+cycle 2 OGA hardening feature: 16.667% ASR
+cycle 2 OGA phase finetune:    26.190% ASR
+cycle 2 clean recovery:        92.857% ASR
+selected final model:          feature_purify best checkpoint
+CFRC status:                   uncertified; mAP drop 5.701 pp
+```
+
+Interpretation:
+
+- Not a final-model pointer bug: `final_model` points to the lowest-ASR
+  feature purifier checkpoint.
+- Not a pure metric artifact: ASR falls from 97.619% to 16.667%, and the CFRC
+  reduction path is statistically strong.
+- Current weakness: clean recovery optimizes clean utility after OGA hardening
+  without a strict enough external-ASR non-regression guard, so it can undo the
+  useful detox direction on v2.
+
+Next run to schedule:
+
+```powershell
+pixi run hybrid-purify-detox-yolo `
+  --config configs/mask_bd_v2_hybrid_purify.yaml `
+  --model D:/clean_yolo/models/mask_bd_v2_poisoned.pt `
+  --teacher-model D:/clean_yolo/models/mask_bd_v2_clean_baseline.pt `
+  --images D:/clean_yolo/datasets/helmet_head_yolo_train_remap/images/train `
+  --labels D:/clean_yolo/datasets/helmet_head_yolo_train_remap/labels/train `
+  --data-yaml D:/clean_yolo/datasets/helmet_head_yolo_train_remap/data.yaml `
+  --target-classes helmet `
+  --external-eval-roots D:/clean_yolo/datasets/mask_bd_external_eval/badnet_oga_mask_bd_v2_visible `
+  --external-replay-roots D:/clean_yolo/datasets/mask_bd_external_eval/badnet_oga_mask_bd_v2_visible `
+  --out runs/mask_bd_v2_detox_recovery_guard_2026-05-16 `
+  --imgsz 416 --batch 8 --cycles 2 --feature-epochs 1 --phase-epochs 1 --recovery-epochs 1 `
+  --max-images 800 --eval-max-images 100 `
+  --external-eval-max-images-per-attack 42 --external-replay-max-images-per-attack 42 `
+  --max-allowed-external-asr 0.1 --max-map-drop 0.05 --selection-max-map-drop 0.08 `
+  --no-pre-prune --use-lagrangian-controller --no-stop-on-pass `
+  --no-phase-finetune --no-clean-recovery-finetune `
+  --external-replay-floor-per-attack 42 --output-distill-scale 0.0 --feature-distill-scale 1.0
+```
 
 ## Separation From Old Matrix
 
