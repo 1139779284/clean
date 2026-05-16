@@ -1,0 +1,54 @@
+# Micro-smoke contribution-1 ablation (~3-5 min per arm).
+#
+# Purpose: catch wiring/syntax errors in Hybrid-PURIFY-OD + Lagrangian
+# integration before committing to a real smoke run.  Not a result; just
+# a plumbing canary.  Skips RNP pre-prune, skips feature_purifier epochs
+# entirely (feature_epochs=0), uses tiny image budgets, and asks for one
+# Ultralytics phase fine-tune pass per arm.
+spec:
+  poisoned_model_id: best_2_poisoned
+  poisoned_model_path: D:/clean_yolo/models/best_2_poisoned.pt
+  teacher_model: null
+  data_yaml: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/data.yaml
+  images: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/images/train
+  labels: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/labels/train
+  target_classes:
+    - helmet
+  external_eval_roots:
+    - D:/clean_yolo/datasets/poison_benchmark_cuda_tuned_remap_v2
+  external_replay_roots:
+    - D:/clean_yolo/datasets/poison_benchmark_cuda_tuned_remap_v2
+  out_root: runs/t0_detox_ablation_micro_2026-05-10
+
+  # Exact sizing of the previously-successful 2026-05-09 smoke run, reduced
+  # only on image budgets.  Keeping imgsz=416 and feature_epochs=0 (matching
+  # the proven smoke) avoids triggering Ultralytics edge cases at imgsz<=320.
+  imgsz: 416
+  batch: 8
+  cycles: 1
+  phase_epochs: 1
+  feature_epochs: 0
+  recovery_epochs: 1
+  device: "0"
+
+  max_images: 320
+  eval_max_images: 60
+  external_eval_max_images_per_attack: 20
+  external_replay_max_images_per_attack: 40
+
+  max_allowed_external_asr: 0.10
+  max_map_drop: 0.10
+  selection_max_map_drop: 0.20
+  no_pre_prune: true
+
+  notes: >
+    Micro canary: mirrors proven 2026-05-09 smoke sizing with reduced image
+    budgets.  Verifies the two arms (static vs Lagrangian) complete, a
+    Hybrid-PURIFY manifest is written with external_json paths, and the
+    Lagrangian trace serializes.  Not a publication artifact.
+
+arms:
+  - name: static_lambda
+    use_lagrangian_controller: false
+  - name: lagrangian_lambda
+    use_lagrangian_controller: true

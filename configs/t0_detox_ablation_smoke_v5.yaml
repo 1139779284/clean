@@ -1,0 +1,86 @@
+# v5 smoke: Patches A+B+C+E + Fix F1/F2 + Patch D (clean teacher).
+#
+# This is the first config that actually enables the 12 custom losses.
+# Prerequisite: run scripts/train_clean_teacher.py first; the resulting
+# best.pt path goes into spec.teacher_model below.
+#
+# Budget: <= 40 min on RTX 4060 Laptop (cycles=1, 5 phases, all with
+# feature purifier running now that the teacher is trustworthy).
+#
+# Launch:
+#   pixi run t0-detox-ablation-plan \
+#     --spec configs/t0_detox_ablation_smoke_v5.yaml \
+#     --out runs/t0_detox_ablation_smoke_v5_2026-05-11
+# Then execute the emitted static_lambda command.
+#
+# Success criteria:
+#   * feature_purifier_enabled = True in manifest (was False in v4)
+#   * per_phase losses show non-zero loss_oda_recall, loss_oda_matched,
+#     loss_pgbd_paired, loss_oga_negative for their respective phases
+#   * wanet_oga ASR stays near v4's 5% (not regress to 9%)
+#   * badnet_oda stays near v4's 3%
+#   * internal selection score improves vs v4 (feature loss should help)
+spec:
+  poisoned_model_id: best_2_poisoned
+  poisoned_model_path: D:/clean_yolo/models/best_2_poisoned.pt
+  # Patch D: independent, never-poisoned teacher produced by
+  # scripts/train_clean_teacher.py.  We use the 3-epoch teacher because
+  # longer fine-tuning on a tiny clean set overfits a nano backbone and
+  # starts hallucinating helmet on sinusoidal blend patterns (the
+  # 10-epoch teacher had blend_oga=35% on hard suite, the 3-epoch one
+  # had 20%).  Combined with output_distill_scale=0 below, the student
+  # gets stable intermediate features from the teacher without copying
+  # the teacher's over-confident final decisions.
+  teacher_model: runs/clean_teacher_yolo26n_2026-05-11/clean_teacher/weights/best.pt
+  data_yaml: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/data.yaml
+  images: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/images/train
+  labels: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/labels/train
+  target_classes:
+    - helmet
+  external_eval_roots:
+    - D:/clean_yolo/datasets/poison_benchmark_cuda_tuned_remap_v2
+  external_replay_roots:
+    - D:/clean_yolo/datasets/poison_benchmark_cuda_tuned_remap_v2
+  out_root: runs/t0_detox_ablation_smoke_v5_2026-05-11
+
+  imgsz: 416
+  batch: 8
+  cycles: 1
+  phase_epochs: 1
+  feature_epochs: 1
+  recovery_epochs: 1
+  device: "0"
+
+  max_images: 800
+  eval_max_images: 80
+  external_eval_max_images_per_attack: 60
+  external_replay_max_images_per_attack: 120
+
+  max_allowed_external_asr: 0.10
+  max_map_drop: 0.05
+  selection_max_map_drop: 0.08
+
+  no_pre_prune: true
+  extra_cli:
+    - "--min-passing-eval-n-per-attack"
+    - "120"
+    - "--no-stop-on-pass"
+    - "--external-replay-floor-per-attack"
+    - "80"
+    # Disable output distillation since the 3-epoch teacher overfits
+    # blend-pattern -> helmet.  Feature distillation and NAD attention
+    # stay on so the student still gets trustworthy intermediate signals.
+    - "--output-distill-scale"
+    - "0.0"
+    - "--feature-distill-scale"
+    - "1.0"
+
+  notes: >
+    v5 smoke: first run that actually exercises the 12 feature-purifier
+    losses, now that Patch D provides a trusted clean teacher.
+
+arms:
+  - name: static_lambda_with_teacher
+    use_lagrangian_controller: false
+    notes: >
+      Static lambda + Patches A/B/C/D/E + Fix F1/F2.

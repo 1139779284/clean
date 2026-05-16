@@ -1,0 +1,54 @@
+# Example: contribution-1 Hybrid-PURIFY-OD ablation (static vs Lagrangian lambda).
+#
+# Usage:
+#   pixi run t0-detox-ablation-plan \
+#     --spec configs/t0_detox_ablation.example.yaml \
+#     --out runs/t0_detox_ablation_<date>
+#
+# The planner:
+#   * writes exact Hybrid-PURIFY-OD commands for each arm,
+#   * probes the output directory for already-completed runs,
+#   * emits a CFRC defense manifest once every arm's hybrid manifest exists,
+#     ready for:
+#       pixi run t0-defense-certificate \
+#         --manifest runs/t0_detox_ablation_<date>/cfrc_manifest.json \
+#         --out runs/t0_detox_ablation_<date>/cfrc
+#
+spec:
+  poisoned_model_id: best_2_poisoned
+  poisoned_model_path: D:/clean_yolo/models/best_2_poisoned.pt
+  teacher_model: D:/clean_yolo/trusted_clean_teacher.pt   # strongly recommended
+  data_yaml: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/data.yaml
+  images: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/images/train
+  labels: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/labels/train
+  target_classes:
+    - helmet
+  external_eval_roots:
+    - D:/clean_yolo/datasets/poison_benchmark_cuda_tuned_remap_v2
+  external_replay_roots:
+    - D:/clean_yolo/poison_benchmark_cuda_large
+  out_root: runs/t0_detox_ablation_<date>
+  imgsz: 640
+  batch: 8
+  cycles: 3
+  phase_epochs: 2
+  feature_epochs: 2
+  recovery_epochs: 2
+  device: "0"
+  max_allowed_external_asr: 0.10
+  max_map_drop: 0.03
+  notes: >
+    Single poisoned baseline, two arms to isolate the contribution-1
+    algorithmic change.  When paired with CFRC, this produces the only
+    publication-grade statement we care about: whether adaptive Lagrangian
+    lambda strictly dominates static lambda at the CMR level, with clean
+    mAP preserved within tolerance.
+
+# Arms may be omitted to use the default pair: static_lambda vs lagrangian_lambda.
+arms:
+  - name: static_lambda
+    use_lagrangian_controller: false
+    notes: Baseline; pre-Lagrangian Hybrid-PURIFY-OD behaviour.
+  - name: lagrangian_lambda
+    use_lagrangian_controller: true
+    notes: Contribution 1 (algorithmic main-line extension).

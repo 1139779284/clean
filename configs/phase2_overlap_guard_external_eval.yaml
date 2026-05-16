@@ -4,7 +4,7 @@ external_hard_suite:
   target_classes:
     - helmet
   roots:
-    - D:\clean_yolo\poison_benchmark_cuda_tuned_remap_v2
+    - D:\clean_yolo\datasets\poison_benchmark_cuda_tuned_remap_v2
   out: D:\clean_yolo\model_security_gate\runs\external_phase2_overlap_guard_valid_remap_v2_full300_conf025_2026-05-09
   imgsz: 416
   conf: 0.25

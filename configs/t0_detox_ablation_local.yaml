@@ -1,0 +1,67 @@
+# Local contribution-1 ablation spec for this machine.
+#
+# Rightsized to the RTX 4060 Laptop (8 GB VRAM) so both arms finish
+# inside a 5-hour budget with headroom.  Key differences vs the smoke
+# spec: cycles=3 (so the Lagrangian controller has multi-cycle
+# violation history to drive adaptive lr scaling and per-bucket loss
+# weights) and larger per-attack eval sizes so CFRC confidence
+# intervals tighten.
+#
+# Generate the runbook (no training starts):
+#   pixi run t0-detox-ablation-plan \
+#     --spec configs/t0_detox_ablation_local.yaml \
+#     --out runs/t0_detox_ablation_local_2026-05-10
+#
+# Run both arms, re-run the planner to refresh the CFRC manifest, then:
+#   pixi run t0-defense-certificate \
+#     --manifest runs/t0_detox_ablation_local_2026-05-10/cfrc_manifest.json \
+#     --out runs/t0_detox_ablation_local_2026-05-10/cfrc
+spec:
+  poisoned_model_id: best_2_poisoned
+  poisoned_model_path: D:/clean_yolo/models/best_2_poisoned.pt
+  teacher_model: null
+  data_yaml: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/data.yaml
+  images: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/images/train
+  labels: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/labels/train
+  target_classes:
+    - helmet
+  external_eval_roots:
+    - D:/clean_yolo/datasets/poison_benchmark_cuda_tuned_remap_v2
+  external_replay_roots:
+    - D:/clean_yolo/datasets/poison_benchmark_cuda_tuned_remap_v2
+  out_root: runs/t0_detox_ablation_local_2026-05-10
+
+  # Budgeted for ~2-2.5 h per arm on RTX 4060 Laptop at imgsz=416.
+  imgsz: 416
+  batch: 8
+  cycles: 3
+  phase_epochs: 1
+  feature_epochs: 1
+  recovery_epochs: 1
+  device: "0"
+
+  # Training-set sizing; smaller than full but big enough for 3 cycles
+  # with meaningful candidate selection.
+  max_images: 800
+  eval_max_images: 100
+  external_eval_max_images_per_attack: 60
+  external_replay_max_images_per_attack: 120
+
+  max_allowed_external_asr: 0.10
+  max_map_drop: 0.03
+  selection_max_map_drop: 0.05
+  no_pre_prune: true
+
+  notes: >
+    Local T0 contribution-1 ablation, rightsized for a ~5-hour budget on
+    an RTX 4060 Laptop.  Only difference between arms is the Lagrangian
+    multi-attack controller, which now scales phase-finetune learning
+    rate by the sqrt of its per-bucket scale.  CFRC certifies whether
+    the adaptive variant strictly dominates the static variant at the
+    CMR level.
+
+arms:
+  - name: static_lambda
+    use_lagrangian_controller: false
+  - name: lagrangian_lambda
+    use_lagrangian_controller: true

@@ -4,6 +4,26 @@
 
 默认适配 Ultralytics YOLO 检测模型，例如 YOLOv8/YOLO11 系列 `.pt` 权重。核心目标不是猜出 trigger，而是检查模型是否依赖非因果捷径：目标区域还在时预测应该稳定；目标区域被移除后预测应该消失；衣服颜色、背景、纹理、压缩、光照等非因果因素不应该单独控制关键类别输出。
 
+**Read-me-first for contributors**:
+- [`../docs/PROJECT_LAYOUT.md`](../docs/PROJECT_LAYOUT.md) — the whole
+  workspace map.
+- [`docs/THREAT_MODEL_AND_LIMITATIONS.md`](docs/THREAT_MODEL_AND_LIMITATIONS.md)
+  — what CFRC can and cannot claim (read before writing any paper).
+- [`docs/P0_P1_P2_PROGRESS_2026-05-10.md`](docs/P0_P1_P2_PROGRESS_2026-05-10.md)
+  — latest contributor-facing status and next-step ordering.
+- [`../docs/CLEANUP_CANDIDATES.md`](../docs/CLEANUP_CANDIDATES.md) — what
+  is safe to archive.
+
+## 三层贡献结构（不要越位）
+
+本项目主线是 **目标检测后门净化**。T0 研究质量由以下三层共同支撑，严格按下列顺序定位，不能颠倒：
+
+1. **主贡献 1 — OD 多攻击净化算法（`detox/`、`guard/`、`cf/`、`scan/`）。** semantic causal detox、WaNet geometry detox、multi-attack no-worse controller、guard-free / trigger-only detox 合成 Hybrid-PURIFY-OD。这条线产出**生产级净化模型**。
+2. **主贡献 2 — Attack zoo + 毒模型矩阵（`attack_zoo/`、`scripts/build_t0_attack_zoo_yolo.py`、`scripts/train_t0_poison_models_yolo.py`、`scripts/plan_t0_poison_model_matrix.py`）。** 覆盖 BadNet/Blend/WaNet/Semantic/Input-aware/Composite 等 13 个攻击族，在多 model × 多 seed × 多 poison rate 下复现。这条线**产出证据**。
+3. **主贡献 3 — CFRC 证据协议（`t0/defense_certificate.py`、`t0/defense_leaderboard.py`、`t0/matrix_aggregator.py`、`t0/evidence_gate.py`）。** paired bootstrap CI + Holm-Bonferroni FWER 校正 + Certified Minimum Reduction 排名。它是贡献 1 的 **可信度放大器** —— 不能替代净化主线，只能保证主线的结论可重复、不被 p-hacking。
+
+论文陈述口径：*We propose a multi-attack no-worse detox framework for backdoored object detectors, supported by an attack-zoo and poisoned-model matrix, and introduce CFRC as a strict per-attack certification protocol that avoids the single-number DER inflation identified in prior benchmark audits.*
+
 ## 当前状态与待完善算法
 
 请先看 [`docs/ALGORITHM_COVERAGE_AND_ROADMAP.md`](docs/ALGORITHM_COVERAGE_AND_ROADMAP.md)。这里列出了当前已经接入的扫描/净化/验收模块，也明确标出仍缺失或只是近似实现的算法，包括 Neural Cleanse、Activation Clustering、Spectral Signatures、STRIP、ABS、RNP-lite 与完整 FMP 接入。

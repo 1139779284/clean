@@ -58,7 +58,7 @@ def build_attack_zoo_dataset(config: AttackZooBuildConfig)->AttackZooBuildResult
         n=0
         for i,(img,labs) in enumerate(cands):
             if not config.dry_run:
-                arr=load_rgb(img); h,w=arr.shape[:2]; bx=_box(labs,config.target_class_id if spec.goal=="oda" else config.source_class_id,w,h); attacked=apply_attack_image(arr,spec,config.seed+i,bx); name=f"{img.stem}_{spec.name}{img.suffix.lower()}"; save_rgb(out/spec.name/"images"/"attack_eval"/name,attacked); _write(out/spec.name/"labels"/"attack_eval"/(Path(name).stem+".txt"),_mutate(labs,spec,config.target_class_id,config.source_class_id))
+                arr=load_rgb(img); h,w=arr.shape[:2]; bx=_box(labs,config.target_class_id if spec.goal=="oda" else config.source_class_id,w,h); attacked=apply_attack_image(arr,spec,config.seed+i,bx); name=f"{img.stem}_{spec.name}{img.suffix.lower()}"; save_rgb(out/spec.name/"images"/"attack_eval"/name,attacked); _write(out/spec.name/"labels"/"attack_eval"/(Path(name).stem+".txt"),labs)
             n+=1
         rows.append({"attack":spec.to_dict(),"written_images":n,"goal":spec.goal}); total+=n
     res=AttackZooBuildResult(str(out),len(config.attacks),total,rows)

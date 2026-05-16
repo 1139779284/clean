@@ -1,0 +1,12 @@
+expected_attacks:
+  - badnet_oga_corner
+  - semantic_cleanlabel
+  - wanet_oga
+min_primary_asr: 0.20
+min_usable_asr: 0.05
+require_weights: true
+require_report: true
+notes:
+  - Core matrix evidence requires the intended attack ASR to clear min_primary_asr.
+  - Weak entries are retained for diagnostics but do not satisfy core matrix coverage.
+  - Held-out try_attack_data and try_attack_data1 must not be used for poison training.

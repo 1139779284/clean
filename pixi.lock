@@ -1990,7 +1990,7 @@ packages:
 - pypi: ./
   name: model-security-gate
   version: 0.1.0
-  sha256: 21ffa498d1f5ce79fdc9c4b1ac2d41e37ea909f51ec665cb10b5c8847a20b19a
+  sha256: 1c96493d774312de96ef859f917d1d25e0fa4b760131840a8819c975c13b53a3
   requires_dist:
   - ultralytics>=8.2.0
   - opencv-python>=4.8.0
