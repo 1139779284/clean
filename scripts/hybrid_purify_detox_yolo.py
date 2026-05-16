@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
                    help="Patch G: path to head_only_blacklist.json. Images listed are excluded from OGA negative training.")
     p.add_argument("--min-passing-eval-n-per-attack", type=int, default=None,
                    help="Fix F1: refuse to declare 'passed' / early-exit when any attack's eval sample size is below N. "
-                        "Prevents small-sample early-exits like v3 (60-img eval max_asr=5% -> passed, but full-300 max was 9.46%).")
+                        "Prevents small-sample early-exits like v3 (60-img eval max_asr=5%% -> passed, but full-300 max was 9.46%%).")
     p.add_argument("--output-distill-scale", type=float, default=None,
                    help="Patch D: multiplier applied on top of phase-wise lambda_output_distill. "
                         "Set to 0.0 to disable output distillation when the teacher's final decisions are not trusted.")
