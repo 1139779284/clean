@@ -177,6 +177,13 @@ guarded recovery from aggressive:
   clean_recovery recovery ASR:   40.476%
   selected final model:          original aggressive checkpoint
   result:                        no mAP recovery accepted
+
+ASR-aware recovery floor10:
+  external replay in recovery:   420 v2 triggered samples
+  recovery ASR:                  9.524%
+  recovery mAP50-95 delta:       -2.412 pp from aggressive checkpoint
+  selected final model:          original aggressive checkpoint
+  result:                        ASR held under smoke, but clean utility did not recover
 ```
 
 Interpretation:
@@ -197,6 +204,10 @@ Interpretation:
   it immediately rebounds ASR to 40.476% and is rolled back.  The next recovery
   variant needs to keep OGA failure replay or feature constraints active while
   restoring clean utility.
+- ASR-aware recovery with floor replay repeat 10 keeps ASR under the 10% smoke
+  ceiling, but still hurts mAP50-95.  The next useful variant should reduce
+  recovery LR/steps or add a recovery selection rule that optimizes mAP only
+  among candidates staying below the ASR ceiling.
 
 Recovery-guard run already tested:
 
@@ -220,10 +231,11 @@ pixi run hybrid-purify-detox-yolo `
   --external-replay-floor-per-attack 42 --output-distill-scale 0.0 --feature-distill-scale 1.0
 ```
 
-Next algorithm step: implement or configure **ASR-aware recovery**.  The clean
-utility step should train on clean data plus OGA external replay constraints,
-then select only candidates that keep ASR below the aggressive checkpoint's
-0-2.381% band while improving mAP50-95.
+Next algorithm step: tune **ASR-aware recovery** instead of plain recovery.
+The replay mechanism now exists (`--recovery-replay-external` plus
+`--external-replay-floor-repeat`); the open problem is finding a low-drift
+recovery schedule that improves mAP50-95 without moving ASR above the smoke
+ceiling.
 
 ## Separation From Old Matrix
 

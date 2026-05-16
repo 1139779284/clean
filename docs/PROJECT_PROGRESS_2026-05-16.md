@@ -296,6 +296,12 @@ baseline ASR 保持 0.000%，但 clean_anchor recovery 和 clean_recovery recove
 因此 v2 下一步不是普通 clean-only recovery，而是 ASR-aware recovery：恢复 clean
 mAP 的同时继续保留 OGA replay / feature 约束。
 
+已添加 ASR-aware recovery 开关：`--recovery-replay-external` 允许 clean_anchor /
+clean_recovery phase 保留外部 hard-suite replay，`--external-replay-floor-repeat`
+允许无失败样本时重复 floor replay。floor repeat 10 的试跑把 recovery ASR 从
+40.476% 压到 9.524%，但 mAP50-95 相对 aggressive checkpoint 又下降 2.412 pp，
+因此仍回滚。下一步应调低 recovery LR/步数，或增加“ASR≤10% 后优先 mAP”的恢复候选选择规则。
+
 ---
 
 ## 📋 下一步最高价值工作
@@ -494,6 +500,7 @@ pixi run hybrid-purify-detox-yolo
 - **2026-05-16**：新增 v2 no-recovery 消融；ASR 降至 14.286%，默认 CFRC reduction path 通过
 - **2026-05-16**：新增 v2 aggressive OGA hardening；ASR 降至 0.000%，通过 10% ASR / 5 pp mAP smoke gate
 - **2026-05-16**：验证 aggressive checkpoint 上普通 clean recovery 会反弹到 40.476% ASR，后续需要 ASR-aware recovery
+- **2026-05-16**：新增 ASR-aware recovery replay/floor-repeat 开关；floor10 将 recovery ASR 控制到 9.524%，但 mAP50-95 未恢复
 - **2026-05-10**：P0/P1/P2 详细进度更新，添加拉格朗日控制器和 CFRC
 - **2026-05-09**：校正套件净化状态，修复类别重映射问题
 - **2026-05-08**：完整算法升级和架构文档
