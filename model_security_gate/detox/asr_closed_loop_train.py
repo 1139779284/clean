@@ -79,6 +79,7 @@ class ASRClosedLoopConfig:
     external_failure_replay: bool = True
     external_failure_replay_repeat: int = 4
     external_replay_floor_per_attack: int = 0  # if > 0 and failure_only=True, still replay at least this many real samples
+    external_replay_floor_repeat: int = 1
     external_oda_full_image_extra_repeat: int = 0
     external_oda_focus_crops: bool = False
     external_oda_focus_crop_repeat: int = 2
@@ -339,7 +340,7 @@ def _build_phase_dataset(
                 seed=cfg.seed + cycle,
                 failure_rows=None,
                 failure_only=False,
-                repeat=1,
+                repeat=max(1, int(getattr(cfg, "external_replay_floor_repeat", 1))),
                 oda_full_image_extra_repeat=int(getattr(cfg, "external_oda_full_image_extra_repeat", 0)),
                 oda_focus_crops=bool(getattr(cfg, "external_oda_focus_crops", False)),
                 oda_focus_crop_repeat=int(getattr(cfg, "external_oda_focus_crop_repeat", 2)),
@@ -356,6 +357,7 @@ def _build_phase_dataset(
                 "by_attack": merged_by_attack,
                 "floor_stats": floor_stats,
                 "external_replay_floor_per_attack": int(cfg.external_replay_floor_per_attack),
+                "external_replay_floor_repeat": max(1, int(getattr(cfg, "external_replay_floor_repeat", 1))),
             }
     write_json(phase_dir / "phase_manifest.json", {"phase": asdict(phase), "replay_stats": replay_stats, "data_yaml": str(yaml_path)})
     return yaml_path

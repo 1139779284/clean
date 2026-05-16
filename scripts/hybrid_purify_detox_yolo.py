@@ -38,6 +38,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--external-replay-max-images-per-attack", type=int, default=None)
     p.add_argument("--external-replay-floor-per-attack", type=int, default=None,
                    help="Patch B: guarantee at least N real replay samples per attack even when failure_only is True.")
+    p.add_argument("--external-replay-floor-repeat", type=int, default=None,
+                   help="Repeat floor replay samples when topping up external replay.")
     p.add_argument("--head-only-blacklist", default=None,
                    help="Patch G: path to head_only_blacklist.json. Images listed are excluded from OGA negative training.")
     p.add_argument("--min-passing-eval-n-per-attack", type=int, default=None,

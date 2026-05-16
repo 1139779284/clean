@@ -68,6 +68,7 @@ class HybridPurifyConfig:
     external_failure_replay: bool = True
     external_failure_replay_repeat: int = 4
     external_replay_floor_per_attack: int = 80
+    external_replay_floor_repeat: int = 1
     external_oda_full_image_extra_repeat: int = 0
     external_oda_focus_crops: bool = False
     external_oda_focus_crop_repeat: int = 2
@@ -1191,6 +1192,7 @@ def run_hybrid_purify_detox_yolo(
                 cfg.aggressive_failure_replay_repeat if cfg.aggressive_mode else cfg.external_failure_replay_repeat
             ),
             external_replay_floor_per_attack=int(cfg.external_replay_floor_per_attack),
+            external_replay_floor_repeat=int(cfg.external_replay_floor_repeat),
             external_oda_full_image_extra_repeat=int(cfg.external_oda_full_image_extra_repeat),
             external_oda_focus_crops=bool(cfg.external_oda_focus_crops),
             external_oda_focus_crop_repeat=int(cfg.external_oda_focus_crop_repeat),

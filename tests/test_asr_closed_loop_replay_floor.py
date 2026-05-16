@@ -129,6 +129,36 @@ def test_replay_floor_zero_preserves_legacy_behavior(tmp_path: Path, monkeypatch
     assert calls[0]["failure_only"] is True
 
 
+def test_replay_floor_repeat_is_configurable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: List[Dict[str, Any]] = []
+    _install_fakes(monkeypatch, calls)
+
+    cfg = ASRClosedLoopConfig(
+        external_failure_replay=True,
+        external_failure_replay_repeat=4,
+        external_replay_floor_per_attack=20,
+        external_replay_floor_repeat=5,
+    )
+
+    _build_phase_dataset(
+        phase=_phase(),
+        cycle=2,
+        output_dir=tmp_path,
+        images_dir=tmp_path / "images",
+        labels_dir=tmp_path / "labels",
+        names={0: "helmet"},
+        target_ids=[0],
+        cfg=cfg,
+        replay_datasets=[_FakeDataset()],
+        failure_rows=[],
+    )
+
+    assert len(calls) == 2
+    assert calls[1]["failure_only"] is False
+    assert int(calls[1]["max_images_per_attack"]) == 20
+    assert int(calls[1]["repeat"]) == 5
+
+
 def test_replay_floor_merges_by_attack_stats(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """added and by_attack should be the sum of both passes."""
 
