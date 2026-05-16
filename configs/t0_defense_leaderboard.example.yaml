@@ -1,0 +1,33 @@
+# Example manifest for `pixi run t0-defense-leaderboard`.
+#
+# Each entry pairs one poisoned baseline with one defended model. The external
+# reports must both come from the SAME corrected hard-suite so paired McNemar
+# tests and per-attack Wilson CIs compare the same images.
+#
+# Run:
+#   pixi run t0-defense-leaderboard --manifest configs/t0_defense_leaderboard.example.yaml \
+#       --out runs/t0_defense_leaderboard_example_<date>
+#
+# Replace placeholders with real paths.
+entries:
+  # Defense A: the project's own Hybrid-PURIFY-OD (the current best).
+  - name: hybrid_purify_best2
+    poisoned_model_id: best_2_poisoned
+    defense: hybrid_purify_od
+    poisoned_external: runs/external_best_2_poisoned_corrected/external_hard_suite_asr.json
+    defended_external: runs/external_best2_purified_semantic_fixed_corrected/external_hard_suite_asr.json
+    clean_before: runs/eval_best_2_poisoned_corrected.json
+    clean_after:  runs/eval_best2_purified_semantic_fixed_corrected.json
+    use_paired_rows: true
+    notes: >
+      Project's own current best purified model, evaluated under the corrected,
+      held-out-leak-audited external suite.
+  # Defense B: Neural-Cleanse-lite baseline re-run on the same poisoned model.
+  # Uncomment and wire real reports once the baseline run finishes.
+  # - name: neural_cleanse_lite_best2
+  #   poisoned_model_id: best_2_poisoned
+  #   defense: neural_cleanse_lite
+  #   poisoned_external: runs/external_best_2_poisoned_corrected/external_hard_suite_asr.json
+  #   defended_external: runs/neural_cleanse_lite_best2/external_hard_suite_asr.json
+  #   clean_before: runs/eval_best_2_poisoned_corrected.json
+  #   clean_after:  runs/neural_cleanse_lite_best2/eval_clean_metrics.json

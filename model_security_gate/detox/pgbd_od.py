@@ -79,13 +79,133 @@ def smooth_warp_view(img: torch.Tensor, amplitude: float = 0.025) -> torch.Tenso
     return F.grid_sample(img, grid, mode="bilinear", padding_mode="reflection", align_corners=True).clamp(0.0, 1.0)
 
 
+def badnet_patch_view(
+    img: torch.Tensor,
+    *,
+    patch_frac: float = 0.06,
+    placement: str = "object_attached",
+    box_xyxy: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Differentiable BadNet-style patch overlay for PGBD paired training.
+
+    Unlike ``semantic_green_view`` / ``sinusoidal_blend_view`` / ``smooth_warp_view``
+    (which are global), this view stamps a small checkerboard patch on top of
+    the image so the attacked view matches the ``attack_zoo`` BadNet evaluation
+    trigger.  Two placements are supported:
+
+    * ``"object_attached"`` uses the supplied ``box_xyxy`` (B, 4) pixel bboxes
+      to place the patch near the top-right of each target box.  When no box is
+      supplied for an image, the patch falls back to ``"bottom_right"`` on that
+      image so the op never silently becomes a no-op.
+    * ``"bottom_right"`` always stamps in the bottom-right corner regardless of
+      boxes.  This mirrors the ``attack_zoo`` BadNet OGA default.
+
+    The patch is written as a deterministic 2x2 checker pattern in ``[0, 1]``.
+    A small blend (alpha=0.96) keeps some gradient from the underlying image so
+    the feature extractor is pushed rather than clamped.
+    """
+    if img.ndim != 4 or img.shape[1] < 1:
+        return img
+    out = img.clone()
+    b, _c, h, w = out.shape
+    side = max(4, int(round(min(h, w) * float(patch_frac))))
+    # Deterministic 2x2 checker tile, repeated to fill the patch.
+    tile = max(2, side // 4)
+    yy, xx = torch.meshgrid(
+        torch.arange(side, device=out.device),
+        torch.arange(side, device=out.device),
+        indexing="ij",
+    )
+    mask = (((xx // tile) + (yy // tile)) % 2) == 0
+    patch_val = torch.zeros((out.shape[1], side, side), device=out.device, dtype=out.dtype)
+    patch_val[:, mask] = 1.0  # white
+    # Non-mask region stays 0 (black), giving a BadNet-like checker.
+    blend = 0.96
+
+    for i in range(b):
+        if str(placement).lower() == "object_attached" and box_xyxy is not None and box_xyxy.numel() >= (i + 1) * 4:
+            x1, y1, x2, _y2 = [float(v) for v in box_xyxy.view(-1, 4)[i].tolist()]
+            # attack_zoo places the patch near the top-right of the helmet.
+            px = int(min(max(0.0, x2 - side * 0.65), max(0.0, w - side)))
+            py = int(min(max(0.0, y1 - side * 0.35), max(0.0, h - side)))
+        else:
+            px, py = max(0, w - side - 2), max(0, h - side - 2)
+        py2 = min(h, py + side)
+        px2 = min(w, px + side)
+        ph = py2 - py
+        pw = px2 - px
+        if ph <= 0 or pw <= 0:
+            continue
+        out[i, :, py:py2, px:px2] = (
+            blend * patch_val[:, :ph, :pw] + (1.0 - blend) * out[i, :, py:py2, px:px2]
+        )
+    return out.clamp(0.0, 1.0)
+
+
+_PHASE_TO_VIEW_MODE = {
+    "oga_hardening": "badnet",  # BadNet OGA = corner patch
+    "oda_hardening": "badnet_object_attached",  # BadNet ODA = patch on helmet
+    "wanet_hardening": "warp",
+    "semantic_hardening": "green",
+    "clean_anchor": "mixed",
+    "clean_recovery": "mixed",
+}
+
+
+def infer_pgbd_mode_from_phase(phase_name: str | None, default: str = "mixed") -> str:
+    """Pick a PGBD attack view mode that matches the detox phase.
+
+    Earlier versions used a single ``mixed`` view (green + sinusoidal + warp)
+    for every phase.  That mismatched the real BadNet evaluation trigger and
+    the warp amplitude did not match the attack_zoo ``wanet_oga`` strength, so
+    the paired displacement loss pushed features against an irrelevant
+    perturbation.  ``infer_pgbd_mode_from_phase`` selects a view that mirrors
+    the corresponding ``attack_zoo`` family.
+    """
+    if not phase_name:
+        return default
+    low = str(phase_name).lower()
+    for key, mode in _PHASE_TO_VIEW_MODE.items():
+        if key in low:
+            return mode
+    # Fall back to the explicit tokens used by phase planner variations.
+    if "oda" in low:
+        return "badnet_object_attached"
+    if "oga" in low:
+        return "badnet"
+    if "wanet" in low or "warp" in low:
+        return "warp"
+    if "semantic" in low:
+        return "green"
+    return default
+
+
 def make_pgbd_attack_view(
     img: torch.Tensor,
     mode: str = "mixed",
     green_strength: float = 0.35,
     blend_alpha: float = 0.10,
     warp_amplitude: float = 0.025,
+    badnet_patch_frac: float = 0.06,
+    badnet_box_xyxy: torch.Tensor | None = None,
 ) -> torch.Tensor:
+    """Construct a paired attack view for PGBD displacement training.
+
+    Supported modes:
+
+    * ``"green" / "semantic" / "semantic_green"`` - differentiable green-vest
+      overlay (mirrors ``semantic_green_cleanlabel``).
+    * ``"blend" / "sinusoidal"`` - sinusoidal blend (mirrors ``blend_oga``).
+    * ``"warp" / "wanet" / "smooth_warp"`` - small smooth warp (mirrors
+      ``wanet_oga``).
+    * ``"badnet"`` - checker patch stamped in the bottom-right corner
+      (mirrors ``badnet_oga_corner``).
+    * ``"badnet_object_attached"`` - checker patch stamped on the supplied
+      bounding box (mirrors ``badnet_oda_object``).  When no box is supplied
+      this falls back to bottom-right placement so the op is never a no-op.
+    * ``"mixed"`` - mild composition of green + blend + warp, preserved for
+      backward compatibility.
+    """
     mode = str(mode or "mixed").lower()
     out = img
     if mode in {"green", "semantic", "semantic_green"}:
@@ -94,6 +214,15 @@ def make_pgbd_attack_view(
         return sinusoidal_blend_view(out, alpha=blend_alpha)
     if mode in {"warp", "wanet", "smooth_warp"}:
         return smooth_warp_view(out, amplitude=warp_amplitude)
+    if mode == "badnet":
+        return badnet_patch_view(out, patch_frac=badnet_patch_frac, placement="bottom_right")
+    if mode in {"badnet_object_attached", "badnet_oda", "badnet_object"}:
+        return badnet_patch_view(
+            out,
+            patch_frac=badnet_patch_frac,
+            placement="object_attached",
+            box_xyxy=badnet_box_xyxy,
+        )
     # Mixed view: mild composition, useful as a generic unknown-trigger pressure.
     out = semantic_green_view(out, strength=green_strength)
     out = sinusoidal_blend_view(out, alpha=blend_alpha)

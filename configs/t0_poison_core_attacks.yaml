@@ -1,0 +1,7 @@
+name: t0_poison_core_attacks
+target_class: helmet
+source_class: head
+attacks:
+  - {name: badnet_oga_corner, family: badnet, goal: oga, trigger_type: patch, target_class: helmet, source_class: head, poison_rate: 0.05, trigger_size: 0.07, trigger_location: bottom_right, label_mode: inject_target}
+  - {name: semantic_cleanlabel, family: semantic, goal: semantic, trigger_type: semantic, target_class: helmet, source_class: head, poison_rate: 0.05, clean_label: true, label_mode: preserve, params: {attributes: [green, vest, person_context]}}
+  - {name: wanet_oga, family: wanet, goal: oga, trigger_type: warp, target_class: helmet, source_class: head, poison_rate: 0.05, label_mode: inject_target, params: {strength: 3.0}}

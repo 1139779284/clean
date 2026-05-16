@@ -1,0 +1,13 @@
+hybrid_purify_detox:
+  # Focused attack spec for mask_bd_v3_sig_poisoned.pt.
+  # The SIG trigger is treated as blend-style OGA detox because it is an
+  # invisible additive pattern rather than a localized patch.
+  attacks:
+    - name: blend_oga
+      kind: blend
+      goal: oga
+      poison_negative: true
+      poison_positive: false
+      params:
+        alpha: 0.18
+        freq: 6

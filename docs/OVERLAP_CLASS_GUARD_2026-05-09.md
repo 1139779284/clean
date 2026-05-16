@@ -8,7 +8,7 @@ After fixing the external benchmark label mapping, the best corrected-suite cand
 D:\clean_yolo\model_security_gate\runs\hybrid_purify_corrected_suite_smoke_2026-05-09\02_cycle_01_phase_02_oga_hardening\ultralytics_phase_finetune\phase_finetune\weights\best.pt
 ```
 
-At `conf=0.25` on `D:\clean_yolo\poison_benchmark_cuda_tuned_remap_v2`, it was close but still above the target:
+At `conf=0.25` on `D:\clean_yolo\datasets\poison_benchmark_cuda_tuned_remap_v2`, it was close but still above the target:
 
 ```text
 max ASR  = 0.103333

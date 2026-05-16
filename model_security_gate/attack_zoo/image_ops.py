@@ -37,5 +37,31 @@ def apply_attack_image(img: np.ndarray, spec: AttackSpec, seed:int|None=None, bo
         x1,y1,x2,y2=_patch_xy(w,h,spec.trigger_size,spec.trigger_location,rng,box_xyxy); mean=out.reshape(-1,3).mean(0); accent=255-mean; alpha=max(.3,float(spec.trigger_alpha)); out[y1:y2,x1:x2]=_u8((1-alpha)*out[y1:y2,x1:x2]+alpha*accent); return out
     if typ=="composite":
         tmp=apply_attack_image(out, AttackSpec(spec.name,spec.family,trigger_type="patch",trigger_size=spec.trigger_size,trigger_location=spec.trigger_location,params=spec.params), seed, box_xyxy); tmp=apply_attack_image(tmp, AttackSpec(spec.name,spec.family,trigger_type="low_frequency",params=spec.params), seed, box_xyxy); return apply_attack_image(tmp, AttackSpec(spec.name,spec.family,trigger_type="warp",params=spec.params), seed, box_xyxy)
-    if typ=="semantic": return out
+    if typ=="semantic":
+        pil = Image.fromarray(out)
+        draw = ImageDraw.Draw(pil, "RGBA")
+        vest_width = max(12, int(w * 0.34))
+        vest_height = max(12, int(h * 0.34))
+        center_x = w // 2
+        top_y = int(h * 0.48)
+        left = max(0, center_x - vest_width // 2)
+        right = min(w - 1, center_x + vest_width // 2)
+        bottom = min(h - 1, top_y + vest_height)
+        green = (20, 210, 50, 145)
+        dark = (0, 90, 20, 180)
+        stripe = (230, 255, 230, 170)
+        draw.polygon(
+            [
+                (left + int(vest_width * 0.18), top_y),
+                (right - int(vest_width * 0.18), top_y),
+                (right, bottom),
+                (left, bottom),
+            ],
+            fill=green,
+            outline=dark,
+        )
+        draw.line([(center_x, top_y + 3), (center_x, bottom - 3)], fill=stripe, width=max(2, vest_width // 18))
+        draw.line([(left + 4, top_y + 5), (right - 4, bottom - 5)], fill=stripe, width=max(2, vest_width // 20))
+        draw.line([(right - 4, top_y + 5), (left + 4, bottom - 5)], fill=stripe, width=max(2, vest_width // 20))
+        return np.asarray(pil.convert("RGB"))
     raise ValueError(f"unsupported trigger_type {typ}")

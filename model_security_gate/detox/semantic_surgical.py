@@ -162,50 +162,6 @@ def semantic_fp_threshold_guard_loss(
     return torch.stack(losses).mean()
 
 
-def semantic_fp_region_max_prob(
-    prediction: Any,
-    batch: Dict[str, Any],
-    target_class_ids: Sequence[int],
-    fp_regions_by_image: Mapping[str, Sequence[Sequence[float]]] | None,
-    *,
-    topk: int = 48,
-    iou_threshold: float = 0.03,
-    center_radius: float = 2.0,
-) -> float:
-    pred = _extract_prediction(prediction)
-    if pred is None or pred.shape[1] < 5 or not target_class_ids:
-        return 0.0
-    target_ids = _target_ids(pred, target_class_ids)
-    if not target_ids:
-        return 0.0
-    files = batch.get("im_file") or []
-    img_h = float(batch["img"].shape[-2])
-    img_w = float(batch["img"].shape[-1])
-    channels = [4 + cid for cid in target_ids]
-    best = 0.0
-    with torch.no_grad():
-        for image_index in range(pred.shape[0]):
-            image_name = str(files[image_index]) if image_index < len(files) else ""
-            regions = _lookup_fp_regions(fp_regions_by_image, image_name)
-            if not regions:
-                continue
-            idx = _candidate_indices_for_regions(
-                pred[image_index],
-                regions,
-                img_w=img_w,
-                img_h=img_h,
-                topk=int(topk),
-                iou_threshold=float(iou_threshold),
-                center_radius=float(center_radius),
-            )
-            if idx.numel() == 0:
-                continue
-            scores = pred[image_index, channels][:, idx].reshape(-1)
-            if scores.numel():
-                best = max(best, float(_score_to_prob(scores).max().detach().cpu().item()))
-    return float(best)
-
-
 def target_absent_nonexpansion_loss(
     prediction: Any,
     batch: Dict[str, Any],

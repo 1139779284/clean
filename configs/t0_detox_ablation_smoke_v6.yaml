@@ -1,0 +1,81 @@
+# v6 smoke: strong_detox only (12 custom losses), no Ultralytics overlay.
+#
+# v5 showed that feature_purifier (strong_detox) produces good candidates
+# (Phase 3 ODA strong = max 5.0%, mean 2.0%, wanet 0%) but the subsequent
+# Ultralytics phase_finetune + clean_recovery paths reset those gains and
+# re-introduce blend_oga 25-53%.  v6 disables both Ultralytics paths so the
+# model only sees the 12-loss strong_detox gradient stream.
+#
+# Budget: <= 30 min on RTX 4060 Laptop.
+# Launch:
+#   pixi run t0-detox-ablation-plan \
+#     --spec configs/t0_detox_ablation_smoke_v6.yaml \
+#     --out runs/t0_detox_ablation_smoke_v6_2026-05-11
+# Then execute the emitted command.
+#
+# Success criteria:
+#   * No phase_finetune or clean_recovery directories under the run tree.
+#   * Every eval row under ``eval_cycle_01_phase_*_feature_*`` maintains
+#     max <= 5%.
+#   * Final max <= 5%, blend_oga <= 10%, wanet_oga <= 5%, badnet_oda <= 5%.
+spec:
+  poisoned_model_id: best_2_poisoned
+  poisoned_model_path: D:/clean_yolo/models/best_2_poisoned.pt
+  teacher_model: runs/clean_teacher_yolo26n_2026-05-11/clean_teacher/weights/best.pt
+  data_yaml: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/data.yaml
+  images: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/images/train
+  labels: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/labels/train
+  target_classes:
+    - helmet
+  external_eval_roots:
+    - D:/clean_yolo/poison_benchmark_v3_filtered
+  external_replay_roots:
+    - D:/clean_yolo/poison_benchmark_v3_filtered
+  out_root: runs/t0_detox_ablation_smoke_v6_2026-05-11
+
+  imgsz: 416
+  batch: 8
+  cycles: 1
+  phase_epochs: 1
+  feature_epochs: 1
+  recovery_epochs: 1
+  device: "0"
+
+  max_images: 800
+  eval_max_images: 80
+  external_eval_max_images_per_attack: 60
+  external_replay_max_images_per_attack: 120
+
+  max_allowed_external_asr: 0.10
+  max_map_drop: 0.05
+  selection_max_map_drop: 0.08
+
+  no_pre_prune: true
+  extra_cli:
+    - "--min-passing-eval-n-per-attack"
+    - "120"
+    - "--no-stop-on-pass"
+    - "--external-replay-floor-per-attack"
+    - "80"
+    # v6: disable BOTH output and feature distillation.
+    # Teacher still provides prototype bank for PGBD + prototype alignment,
+    # and NAD attention loss uses teacher features for attention maps.
+    # But direct feature-layer alignment is off to prevent teacher's ODA
+    # weakness (badnet_oda 5%) from contaminating the student.
+    - "--output-distill-scale"
+    - "0.0"
+    - "--feature-distill-scale"
+    - "0.0"
+    # v6 key change: disable Ultralytics overlay paths.
+    - "--no-phase-finetune"
+    - "--no-clean-recovery-finetune"
+
+  notes: >
+    v6 smoke: strong_detox-only, no Ultralytics phase_finetune / recovery.
+    Isolates the 12-loss feature_purifier effect from standard supervised
+    fine-tune interference.
+
+arms:
+  - name: strong_only_with_teacher
+    use_lagrangian_controller: false
+    notes: Feature purifier only (12 losses), no Ultralytics overlay.

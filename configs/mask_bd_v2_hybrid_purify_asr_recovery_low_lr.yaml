@@ -1,0 +1,17 @@
+hybrid_purify_detox:
+  # ASR-aware recovery profile for the v2 aggressive checkpoint.
+  #
+  # Keep the focused v2 visible-patch OGA attack spec, but use a lower
+  # recovery LR so clean recovery has a chance to improve utility without
+  # drifting back into the visible trigger basin.
+  recovery_lr: 2.0e-6
+  recovery_clean_repeat: 5
+  attacks:
+    - name: badnet_oga
+      kind: badnet_patch
+      goal: oga
+      poison_negative: true
+      poison_positive: false
+      params:
+        patch_frac: 0.09
+        position: br

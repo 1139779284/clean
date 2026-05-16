@@ -1,0 +1,25 @@
+expected_attacks:
+  - badnet_oga_corner
+  - semantic_cleanlabel
+  - wanet_oga
+expected_seeds:
+  - 1
+  - 2
+  - 3
+expected_poison_rates:
+  - 0.01
+  - 0.03
+  - 0.05
+  - 0.10
+min_primary_asr: 0.20
+min_usable_asr: 0.05
+require_weights: true
+require_report: true
+require_any_strong: false
+require_full_factorial: true
+full_factorial_cell_acceptance: present
+notes:
+  - This is the stronger publication-style coverage gate.
+  - Full-factorial cells require present weights and reports; ASR strength is still reported per cell.
+  - It is expected to block until all attack x seed x poison-rate cells are trained and evaluated.
+  - Use configs/t0_poison_matrix_evidence.yaml for the current core smoke matrix gate.

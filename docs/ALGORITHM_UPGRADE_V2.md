@@ -61,7 +61,7 @@ Start conservatively. Do not simply maximize all new weights.
 
 ```powershell
 python scripts/hybrid_purify_detox_yolo.py `
-  --model "D:\clean_yolo\best 2.pt" `
+  --model "D:\clean_yolo\models\best_2_poisoned.pt" `
   --teacher-model "D:\clean_yolo\trusted_clean_teacher.pt" `
   --images "D:\clean_yolo\dataset\images\train" `
   --labels "D:\clean_yolo\dataset\labels\train" `

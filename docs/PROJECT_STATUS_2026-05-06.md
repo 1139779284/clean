@@ -76,7 +76,7 @@ Initial Pareto-Merge smoke:
 ```text
 D:\clean_yolo\model_security_gate\runs\pareto_merge_external_tiny_2026-05-07
 
-base:   D:\clean_yolo\best 2.pt
+base:   D:\clean_yolo\models\best_2_poisoned.pt
 source: D:\clean_yolo\model_security_gate\runs\asr_aware_detox_best2_large_fix_2026-05-05\02_cycle_01_train\asr_aware\weights\best.pt
 suite:  poison_benchmark_cuda_tuned, max 20 images per attack
 

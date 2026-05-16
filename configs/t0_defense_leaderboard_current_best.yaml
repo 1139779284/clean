@@ -1,0 +1,18 @@
+# CFRC manifest for the current best purified model against the poisoned
+# baseline on the corrected remap_v2 external hard suite.
+#
+# Both reports are full-300 per attack on the same corrected suite, so
+# paired McNemar + bootstrap apply directly.
+entries:
+  - name: hybrid_purify_current_best
+    poisoned_model_id: best_2_poisoned
+    defense: hybrid_purify_od_current_best
+    poisoned_external: runs/external_best2_poisoned_valid_remap_v2_full300_2026-05-09/external_hard_suite_asr.json
+    defended_external: runs/full_flow_green_final_2026-05-09/external_hard_suite/external_hard_suite_asr.json
+    clean_before: runs/eval_best2_poisoned_remap_2026-05-09.json
+    clean_after: runs/full_flow_green_final_2026-05-09/clean_metrics.json
+    use_paired_rows: true
+    notes: >
+      Poisoned baseline = best_2.pt; defended = best2_purified_semantic_fixed_2026-05-09.pt.
+      External suite = poison_benchmark_cuda_tuned_remap_v2 (corrected remap v2).
+      Clean mAP evaluated on helmet_head_yolo_train_remap val.

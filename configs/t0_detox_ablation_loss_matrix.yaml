@@ -1,0 +1,68 @@
+# Per-loss Hybrid-PURIFY-OD ablation spec.
+#
+# Each arm starts from the full Lagrangian-adaptive config and zeros out
+# exactly one loss term, to measure its marginal contribution to CMR.  The
+# spec is identical to the smoke config; only the per-arm config_overrides
+# change the lambda multipliers.
+#
+# When run with the plan CLI, each arm produces a Hybrid-PURIFY manifest
+# and, after re-planning, a CFRC-ready row.  Comparing CMR across arms tells
+# us which loss terms actually carry the certified gains.
+spec:
+  poisoned_model_id: best_2_poisoned
+  poisoned_model_path: D:/clean_yolo/models/best_2_poisoned.pt
+  teacher_model: null
+  data_yaml: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/data.yaml
+  images: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/images/train
+  labels: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/labels/train
+  target_classes:
+    - helmet
+  external_eval_roots:
+    - D:/clean_yolo/datasets/poison_benchmark_cuda_tuned_remap_v2
+  external_replay_roots:
+    - D:/clean_yolo/datasets/poison_benchmark_cuda_tuned_remap_v2
+  out_root: runs/t0_detox_ablation_loss_matrix_2026-05-10
+  imgsz: 416
+  batch: 8
+  cycles: 1
+  phase_epochs: 1
+  feature_epochs: 1
+  recovery_epochs: 1
+  device: "0"
+  max_images: 800
+  eval_max_images: 100
+  external_eval_max_images_per_attack: 40
+  external_replay_max_images_per_attack: 80
+  max_allowed_external_asr: 0.10
+  max_map_drop: 0.10
+  selection_max_map_drop: 0.20
+  no_pre_prune: true
+  notes: >
+    Per-loss marginal contribution ablation; each arm disables one loss term
+    on top of the full Lagrangian-adaptive config.  Intended for a single
+    poisoned baseline and the corrected remap_v2 external suite.  Smoke
+    sizing only - for publication-grade numbers, rerun at full sizing with
+    configs/t0_detox_ablation_local.yaml.
+
+arms:
+  - name: full
+    use_lagrangian_controller: true
+    notes: Full Hybrid-PURIFY-OD with adaptive lambdas. Reference arm.
+  - name: no_oda_matched
+    use_lagrangian_controller: true
+    config_overrides:
+      aggressive_lambda_oda_matched: 0.0
+    notes: Disable the matched_candidate_oda_loss contribution.
+  - name: no_oga_negative
+    use_lagrangian_controller: true
+    config_overrides:
+      aggressive_lambda_oga_negative: 0.0
+    notes: Disable the target-absent OGA suppression term.
+  - name: no_pgbd_paired
+    use_lagrangian_controller: true
+    config_overrides:
+      aggressive_lambda_pgbd_paired: 0.0
+    notes: Disable the PGBD-OD paired-displacement loss.
+  - name: no_lagrangian
+    use_lagrangian_controller: false
+    notes: Keep all losses; revert to static lambdas (contribution-1 anchor).

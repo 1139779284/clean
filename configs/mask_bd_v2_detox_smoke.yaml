@@ -1,0 +1,61 @@
+# Smoke detox plan for the v2 visible-patch OGA benchmark.
+#
+# First prepare the loader-friendly external eval root:
+#   pixi run python tools/clean_label_mask/prepare_mask_bd_external_eval.py
+#
+# Then emit the Hybrid-PURIFY runbook:
+#   pixi run t0-detox-ablation-plan \
+#     --spec configs/mask_bd_v2_detox_smoke.yaml \
+#     --out runs/mask_bd_v2_detox_smoke_named_2026-05-16
+spec:
+  poisoned_model_id: mask_bd_v2_poisoned
+  poisoned_model_path: D:/clean_yolo/models/mask_bd_v2_poisoned.pt
+  teacher_model: D:/clean_yolo/models/mask_bd_v2_clean_baseline.pt
+  data_yaml: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/data.yaml
+  images: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/images/train
+  labels: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/labels/train
+  hybrid_config: configs/mask_bd_v2_hybrid_purify.yaml
+  target_classes:
+    - helmet
+  external_eval_roots:
+    - D:/clean_yolo/datasets/mask_bd_external_eval/badnet_oga_mask_bd_v2_visible
+  external_replay_roots:
+    - D:/clean_yolo/datasets/mask_bd_external_eval/badnet_oga_mask_bd_v2_visible
+  out_root: runs/mask_bd_v2_detox_smoke_named_2026-05-16
+
+  imgsz: 416
+  batch: 8
+  cycles: 1
+  phase_epochs: 1
+  feature_epochs: 1
+  recovery_epochs: 1
+  device: "0"
+
+  max_images: 800
+  eval_max_images: 100
+  external_eval_max_images_per_attack: 42
+  external_replay_max_images_per_attack: 42
+
+  max_allowed_external_asr: 0.10
+  max_map_drop: 0.05
+  selection_max_map_drop: 0.08
+  no_pre_prune: true
+  extra_cli:
+    - "--no-stop-on-pass"
+    - "--external-replay-floor-per-attack"
+    - "42"
+    - "--output-distill-scale"
+    - "0.0"
+    - "--feature-distill-scale"
+    - "1.0"
+
+  notes: >
+    v2 visible-patch OGA smoke. Uses the paired clean baseline as teacher and
+    the prepared mask_bd external eval root for ASR/replay. This is a fast
+    detector for whether Hybrid-PURIFY can remove the high-ASR visible trigger.
+
+arms:
+  - name: static_lambda
+    use_lagrangian_controller: false
+  - name: lagrangian_lambda
+    use_lagrangian_controller: true

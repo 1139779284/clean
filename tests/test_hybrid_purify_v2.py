@@ -1,4 +1,12 @@
-from model_security_gate.detox.hybrid_purify_train import HybridPurifyConfig, compare_asr_matrices, _candidate_block_reasons, _candidate_improved, _hybrid_selection_score
+from model_security_gate.detox.asr_closed_loop_train import ClosedLoopPhase
+from model_security_gate.detox.hybrid_purify_train import (
+    HybridPurifyConfig,
+    _apply_recovery_replay_external,
+    _candidate_block_reasons,
+    _candidate_improved,
+    _hybrid_selection_score,
+    compare_asr_matrices,
+)
 from model_security_gate.detox.external_hard_suite import score_for_attack_name
 from model_security_gate.detox.rnp import RNPConfig
 
@@ -46,6 +54,61 @@ def test_candidate_improved_rejects_higher_external_max_even_with_better_score()
     assert not _candidate_improved(candidate, best, cfg)
 
 
+def test_candidate_improved_can_prefer_clean_map_among_passing_candidates():
+    cfg = HybridPurifyConfig(
+        prefer_passing_clean_map=True,
+        min_selection_improvement=0.005,
+        min_external_asr_improvement=0.001,
+    )
+    best = {
+        "passes": True,
+        "selection_score": 0.0,
+        "external_max_asr": 0.0,
+        "external_mean_asr": 0.0,
+        "map_drop": 0.050,
+    }
+    candidate = {
+        "passes": True,
+        "selection_score": 0.12,
+        "external_max_asr": 0.07,
+        "external_mean_asr": 0.07,
+        "map_drop": 0.037,
+    }
+    assert _candidate_improved(candidate, best, cfg)
+
+
+def test_candidate_improved_clean_map_preference_requires_passing_candidate():
+    cfg = HybridPurifyConfig(prefer_passing_clean_map=True)
+    best = {"passes": True, "selection_score": 0.0, "external_max_asr": 0.0, "external_mean_asr": 0.0, "map_drop": 0.050}
+    candidate = {
+        "passes": False,
+        "selection_score": 0.12,
+        "external_max_asr": 0.07,
+        "external_mean_asr": 0.07,
+        "map_drop": 0.037,
+    }
+    assert not _candidate_improved(candidate, best, cfg)
+
+
+def test_candidate_improved_never_replaces_passing_best_with_failing_candidate():
+    cfg = HybridPurifyConfig(min_external_asr_improvement=0.001)
+    best = {
+        "passes": True,
+        "selection_score": 0.09,
+        "external_max_asr": 0.05,
+        "external_mean_asr": 0.05,
+        "map_drop": 0.038,
+    }
+    candidate = {
+        "passes": False,
+        "selection_score": 0.04,
+        "external_max_asr": 0.02,
+        "external_mean_asr": 0.02,
+        "map_drop": 0.052,
+    }
+    assert not _candidate_improved(candidate, best, cfg)
+
+
 def test_candidate_block_reasons_report_map_and_attack_failures():
     cfg = HybridPurifyConfig(max_map_drop=0.03)
     item = {
@@ -78,9 +141,28 @@ def test_phase_level_selection_defaults_are_safe():
     assert cfg.rollback_bad_phase is True
     assert cfg.external_failure_replay is True
     assert cfg.external_select_phase_checkpoints is True
+    assert cfg.recovery_replay_external is False
     assert cfg.aggressive_lambda_oda_recall > 0
     assert cfg.oda_recall_min_conf > 0
     assert cfg.oda_recall_loss_scale >= 1
+
+
+def test_recovery_replay_external_only_marks_clean_recovery_phases():
+    phases = [
+        ClosedLoopPhase(name="clean_anchor", replay_external=False),
+        ClosedLoopPhase(name="oga_hardening", replay_external=True),
+        ClosedLoopPhase(name="clean_recovery", replay_external=False),
+    ]
+    _apply_recovery_replay_external(phases, enabled=True)
+    assert phases[0].replay_external is True
+    assert phases[1].replay_external is True
+    assert phases[2].replay_external is True
+
+
+def test_recovery_replay_external_noop_when_disabled():
+    phases = [ClosedLoopPhase(name="clean_recovery", replay_external=False)]
+    _apply_recovery_replay_external(phases, enabled=False)
+    assert phases[0].replay_external is False
 
 
 def test_attack_score_matching_keeps_oga_and_oda_separate():

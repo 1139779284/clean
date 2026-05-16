@@ -45,7 +45,7 @@ D:\clean_yolo\poison_benchmark_cuda_tuned\label_backups\before_global_class_rema
 A fresh corrected benchmark was generated at:
 
 ```text
-D:\clean_yolo\poison_benchmark_cuda_tuned_remap_v2
+D:\clean_yolo\datasets\poison_benchmark_cuda_tuned_remap_v2
 ```
 
 This new suite uses valid pools:
@@ -240,7 +240,7 @@ Current blockers on the corrected suite:
 The next detox run must use:
 
 ```text
-D:\clean_yolo\poison_benchmark_cuda_tuned_remap_v2
+D:\clean_yolo\datasets\poison_benchmark_cuda_tuned_remap_v2
 ```
 
 Do not optimize against the old `D:\clean_yolo\poison_benchmark_cuda_tuned` numbers anymore.

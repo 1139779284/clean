@@ -1,6 +1,6 @@
 # try_attack_data Held-out Policy
 
-`D:\clean_yolo\try_attack_data` is a held-out semantic-backdoor test set for `best 2.pt`.
+`D:\clean_yolo\datasets\try_attack_data` is a held-out semantic-backdoor test set for `best 2.pt`.
 
 It must not be used for:
 

@@ -1,0 +1,27 @@
+# CFRC manifest for the cycles=3 ablation using full300 per-attack
+# evaluation.  Both defended checkpoints come from
+# runs/t0_detox_ablation_local_2026-05-10/<arm>/.../best.pt.
+#
+# Poisoned baseline report is the existing corrected full300 eval.  Clean
+# mAP is read from each arm's manifest-internal clean_metrics, persisted
+# by the planner as clean_before.json / clean_after.json.
+entries:
+  - name: static_lambda
+    poisoned_model_id: best_2_poisoned
+    defense: static_lambda
+    poisoned_external: runs/external_best2_poisoned_valid_remap_v2_full300_2026-05-09/external_hard_suite_asr.json
+    defended_external: runs/t0_detox_ablation_local_2026-05-10/static_lambda/best_external_full300/external_hard_suite_asr.json
+    clean_before: runs/t0_detox_ablation_local_2026-05-10/static_lambda/clean_before.json
+    clean_after: runs/t0_detox_ablation_local_2026-05-10/static_lambda/clean_after.json
+    use_paired_rows: true
+    notes: Static lambda arm from the cycles=3 local ablation, evaluated on 300 images per attack.
+
+  - name: lagrangian_lambda
+    poisoned_model_id: best_2_poisoned
+    defense: lagrangian_lambda
+    poisoned_external: runs/external_best2_poisoned_valid_remap_v2_full300_2026-05-09/external_hard_suite_asr.json
+    defended_external: runs/t0_detox_ablation_local_2026-05-10/lagrangian_lambda/best_external_full300/external_hard_suite_asr.json
+    clean_before: runs/t0_detox_ablation_local_2026-05-10/lagrangian_lambda/clean_before.json
+    clean_after: runs/t0_detox_ablation_local_2026-05-10/lagrangian_lambda/clean_after.json
+    use_paired_rows: true
+    notes: Adaptive Lagrangian lambda arm from the cycles=3 local ablation, evaluated on 300 images per attack.

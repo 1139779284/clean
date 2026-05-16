@@ -1,0 +1,84 @@
+# Full cycles=3 ablation with Patches A+B+C+E applied (2026-05-11 v3).
+#
+# Run command:
+#
+#   pixi run t0-detox-ablation-plan \
+#     --spec configs/t0_detox_ablation_local_v3.yaml \
+#     --out runs/t0_detox_ablation_local_v3_2026-05-11
+#
+# Then execute the emitted train commands sequentially (two arms).  Total
+# wall-clock is ~5 hours on a RTX 4060 Laptop (same sizing as v2).
+#
+# Expected improvements over v2 (2026-05-11):
+#   * badnet_oda should drop from 4.20% (v2 static) toward the <3% target,
+#     because Patch A aligns the synthetic training trigger with the
+#     attack_zoo evaluation (`object_attached` placement + bbox-aware).
+#   * All five attack families should see more real-sample exposure per
+#     cycle (Patch B floor=80 when failure list shrinks).
+#   * The ODA phase finally trains recall loss above task loss (Patch C).
+#   * PGBD paired view matches the active phase (Patch E).
+#
+# Known limitation: no teacher model is provided, so the 12 custom losses
+# in strong_train remain disabled (Patch D is pending user decision).
+# Even so, Patches A+B+C+E affect the Ultralytics phase-finetune path the
+# ODA/OGA/WaNet phase weights feed into, which is where v1/v2 did all
+# their actual gradient updates.
+spec:
+  poisoned_model_id: best_2_poisoned
+  poisoned_model_path: D:/clean_yolo/models/best_2_poisoned.pt
+  teacher_model: null
+  data_yaml: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/data.yaml
+  images: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/images/train
+  labels: D:/clean_yolo/datasets/helmet_head_yolo_train_remap/labels/train
+  target_classes:
+    - helmet
+  external_eval_roots:
+    - D:/clean_yolo/datasets/poison_benchmark_cuda_tuned_remap_v2
+  external_replay_roots:
+    - D:/clean_yolo/datasets/poison_benchmark_cuda_tuned_remap_v2
+  out_root: runs/t0_detox_ablation_local_v3_2026-05-11
+
+  # Same sizing as v2 so results are apples-to-apples comparable.
+  imgsz: 416
+  batch: 8
+  cycles: 3
+  phase_epochs: 1
+  feature_epochs: 1
+  recovery_epochs: 1
+  device: "0"
+
+  max_images: 800
+  eval_max_images: 100
+  external_eval_max_images_per_attack: 60
+  external_replay_max_images_per_attack: 120
+
+  max_allowed_external_asr: 0.10
+  max_map_drop: 0.03
+  selection_max_map_drop: 0.05
+
+  no_pre_prune: true
+
+  notes: >
+    Full cycles=3 ablation with Patches A (attack_zoo alignment), B (replay
+    floor), C (ODA phase rebalance), E (phase-aware PGBD view).  Both arms
+    share the same sizing as v2 for a clean head-to-head comparison.  CFRC
+    evaluation uses the deployment threshold conf=0.30 against the same
+    poisoned baseline as v2.
+
+arms:
+  - name: static_lambda
+    use_lagrangian_controller: false
+    config_overrides:
+      external_replay_floor_per_attack: 80
+    notes: >
+      Static lambda weights + Patches A/B/C/E.  Baseline arm for CFRC
+      paired bootstrap against the poisoned model.
+
+  - name: lagrangian_lambda
+    use_lagrangian_controller: true
+    config_overrides:
+      external_replay_floor_per_attack: 80
+    notes: >
+      Adaptive Lagrangian lambda + Patches A/B/C/E.  This is the arm that
+      tests whether adaptive per-attack weighting still adds value now
+      that the static baseline actually exercises the detox losses.
