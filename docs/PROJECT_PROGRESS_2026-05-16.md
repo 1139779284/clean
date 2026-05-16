@@ -254,6 +254,7 @@ wanet_oga 单元：
 | v2 visible OGA | static_lambda | 97.619% | 26.190% | 4.233 pp | 未过 10% ASR |
 | v2 visible OGA | lagrangian_lambda | 97.619% | 23.810% | 4.428 pp | 未过 10% ASR |
 | v2 visible OGA | lagrangian_2cycle | 97.619% | 16.667% | 5.701 pp | 继续下降，但仍未过 ASR/mAP smoke |
+| v2 visible OGA | lagrangian_no_recovery | 97.619% | 14.286% | 2.211 pp | CFRC reduction 认证通过，仍未过 10% ASR |
 | v3 SIG OGA | static_lambda | 69.048% | 0.000% | 3.960 pp | 通过 |
 | v3 SIG OGA | lagrangian_lambda | 69.048% | 0.000% | 3.974 pp | 通过 |
 
@@ -262,9 +263,10 @@ wanet_oga 单元：
 `badnet_oga` / `blend_oga` 约束，避免新外部套件被控制器视为未观测。
 
 CFRC 证书已输出到各 run root 的 `cfrc_certificate/`。注意：CFRC 默认
-clean mAP drop 容差是 3 pp，比 smoke 的 5 pp 更严格；因此当前 v2/v3
-smoke 虽然在 ASR reduction 上有显著证据（v3 ASR 已到 0），但都还未达到
-默认 CFRC 证书的 clean mAP 容差。
+clean mAP drop 容差是 3 pp，比 smoke 的 5 pp 更严格；早期 v2/v3 smoke
+虽然在 ASR reduction 上有显著证据（v3 ASR 已到 0），但 mAP drop 超过默认
+CFRC 容差。后续 `lagrangian_no_recovery` 把 v2 mAP drop 控制到 2.211 pp，
+因此通过了默认 CFRC 的 reduction-path 认证。
 
 v2 双周期诊断：最终 `hybrid_purify_manifest.json` 的 `final_model` 正确指向
 cycle 2 OGA hardening 的 `feature_purify` 最佳候选，而不是后续 clean recovery
@@ -273,6 +275,12 @@ v2 对恢复阶段非常敏感：cycle 2 OGA feature 候选达到 16.667% ASR，
 回升到 26.190%，clean recovery 后回升到 92.857%。下一步算法改进应围绕
 恢复阶段外部 ASR 回滚、禁用/弱化 phase finetune，以及把 recovery 的目标改成
 在不破坏 OGA hardening 的条件下恢复 clean mAP。
+
+随后运行的 `lagrangian_no_recovery` 消融禁用了 phase finetune 和 clean recovery
+finetune，最佳点达到 14.286% ASR、2.211 pp mAP drop，默认 CFRC 证书通过
+reduction path（CMR=0.7381，Holm p=5.821e-11）。这说明算法主干已经能给出
+可认证的大幅 ASR 下降，但 v2 还需要更强 OGA hardening 或跳过 clean recovery phase
+才能达到 smoke 的 ≤10% 绝对 ASR 目标。
 
 ---
 
@@ -418,7 +426,7 @@ model_security_gate/docs/
 - **v2 ASR**：97.6%（可见 trigger）
 - **v3 ASR**：69.0%（不可见 trigger，PSNR 27.9 dB）
 - **v3 ASR delta**：64.3 pp（相对 clean baseline）
-- **v2 当前最佳净化**：16.667% ASR（2-cycle Lagrangian，mAP drop 5.701 pp，未认证）
+- **v2 当前最佳净化**：14.286% ASR（no-recovery Lagrangian，mAP drop 2.211 pp，CFRC reduction 认证通过）
 
 ### 矩阵状态
 - **规划规模**：1560 条目
@@ -468,6 +476,7 @@ pixi run hybrid-purify-detox-yolo
 
 - **2026-05-16**：创建综合进度文档，整合后门模型基准状态
 - **2026-05-16**：补充 v2 双周期 Lagrangian 净化结果；确认 v2 失败主因是恢复阶段反弹，不是最终模型指针错误
+- **2026-05-16**：新增 v2 no-recovery 消融；ASR 降至 14.286%，默认 CFRC reduction path 通过
 - **2026-05-10**：P0/P1/P2 详细进度更新，添加拉格朗日控制器和 CFRC
 - **2026-05-09**：校正套件净化状态，修复类别重映射问题
 - **2026-05-08**：完整算法升级和架构文档

@@ -13,6 +13,8 @@ T0 poison-model matrix.  The matrix remains the publication-scale contribution
 - Detox smoke configs: `model_security_gate/configs/mask_bd_*_detox_smoke.yaml`
 - v2 focused follow-up config:
   `model_security_gate/configs/mask_bd_v2_detox_2cycle_lagrangian.yaml`
+- v2 recovery-ablation config:
+  `model_security_gate/configs/mask_bd_v2_detox_no_recovery_lagrangian.yaml`
 - Focused Hybrid-PURIFY attack configs:
   `model_security_gate/configs/mask_bd_v2_hybrid_purify.yaml`,
   `model_security_gate/configs/mask_bd_v3_sig_hybrid_purify.yaml`
@@ -106,6 +108,12 @@ v2 visible OGA follow-up:
   lagrangian_2cycle: 97.619% -> 16.667% ASR, mAP drop 5.701 pp, failed threshold
   run root: model_security_gate/runs/mask_bd_v2_detox_2cycle_lagrangian_2026-05-16/
 
+v2 visible OGA recovery ablation:
+  lagrangian_no_recovery: 97.619% -> 14.286% ASR, mAP drop 2.211 pp
+  CFRC: PASS through reduction path, CMR 0.7381, Holm p 5.821e-11
+  smoke gate: still failed because absolute ASR is above 10%
+  run root: model_security_gate/runs/mask_bd_v2_detox_no_recovery_lagrangian_2026-05-16/
+
 v3 SIG OGA:
   static_lambda:     69.048% -> 0.000% ASR, mAP drop 3.960 pp, passed
   lagrangian_lambda: 69.048% -> 0.000% ASR, mAP drop 3.974 pp, passed
@@ -129,9 +137,10 @@ Notes:
 - v2 remains the hard visible-trigger benchmark.  The two-cycle Lagrangian
   follow-up reached 16.667% ASR, but phase finetune and clean recovery both
   rebound ASR sharply.  The final manifest correctly keeps the best feature
-  purifier checkpoint, so the next v2 work is algorithmic: make recovery
-  conservative with external ASR rollback, or run a no-phaseft/no-recovery
-  variant before increasing cycles.
+  purifier checkpoint.  The no-recovery ablation improves the best point to
+  14.286% ASR with only 2.211 pp mAP drop, so the next v2 work is no longer
+  about mAP recovery; it is about getting the OGA feature-hardening stage below
+  four triggered detections out of the 42-image smoke set.
 
 ## v2 Recovery Rebound Diagnosis
 
@@ -143,6 +152,10 @@ cycle 2 OGA phase finetune:    26.190% ASR
 cycle 2 clean recovery:        92.857% ASR
 selected final model:          feature_purify best checkpoint
 CFRC status:                   uncertified; mAP drop 5.701 pp
+
+no-recovery best feature:       14.286% ASR
+no-recovery mAP drop:           2.211 pp
+no-recovery CFRC status:        certified by reduction path
 ```
 
 Interpretation:
@@ -153,7 +166,9 @@ Interpretation:
   reduction path is statistically strong.
 - Current weakness: clean recovery optimizes clean utility after OGA hardening
   without a strict enough external-ASR non-regression guard, so it can undo the
-  useful detox direction on v2.
+  useful detox direction on v2.  Once recovery finetune is disabled, mAP is
+  inside the default CFRC tolerance and the remaining gap is absolute ASR:
+  14.286% means 6/42 triggered images still fire; the smoke pass needs 4/42.
 
 Next run to schedule:
 
